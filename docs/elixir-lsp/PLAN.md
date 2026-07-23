@@ -512,8 +512,8 @@ other languages). `scripts/test.sh` full suite is the per-PR guard.
 | PR-0b enclosing-function attribution | `d987aeca` | ☑ 2026-07-23 |
 | PR-0c nested module QNs (D6); D3 → PR-1c | `27af2583` | ☑ 2026-07-23 |
 | PR-0d module-body directives | `214b2fe6` | ☑ 2026-07-23 |
-| PR-0e vars + contract strength | | ☑ 2026-07-23 |
-| Checkpoint C1 recorded (`testing/AFTER-PHASE-0.md`) | — | ☐ |
+| PR-0e vars + contract strength | `0a25d2f4` | ☑ 2026-07-23 |
+| Checkpoint C1 recorded (`testing/AFTER-PHASE-0.md`) | — | ☑ 2026-07-24 |
 | PR-1a skeleton + wiring + originality rows | | ☐ |
 | PR-1b scopes/aliases/imports resolution | | ☐ |
 | PR-1c pipes/captures/default arities | | ☐ |
@@ -605,6 +605,14 @@ other languages). `scripts/test.sh` full suite is the per-PR guard.
   Scope note: in-function-body variable extraction remains out of scope for the
   grammar layer (the walk is module-level by design); not needed for call
   resolution. **Phase 0 (D1–D8) complete** — next is checkpoint C1.
+- 2026-07-24 — Checkpoint C1 recorded (`testing/AFTER-PHASE-0.md`).
+  Objective (B → C1): IMPORTS 40→92 / 82→223 / 500→2064; Function-sourced
+  CALLS 56→68 % / 70→76 % / 60→63 %; Functions +37/+94/+107; index time flat.
+  Rubric 17/17 PASS under the stricter MCP-only runner (baseline reached 17/17
+  partly via text fallback the C1 runner forbids) — graph-gap signals 3→1
+  questions; E1 went from a 7-tool `grep` cascade to 4 clean graph tools.
+  Non-Elixir control (graph-ui TS, 46 files): baseline and C1 binaries produce
+  byte-identical graphs (338 nodes/764 edges) — Phase 0 confirmed Elixir-scoped.
 
 ## 7. Risks and mitigations
 
