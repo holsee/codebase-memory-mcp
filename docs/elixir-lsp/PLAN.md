@@ -613,6 +613,18 @@ other languages). `scripts/test.sh` full suite is the per-PR guard.
   questions; E1 went from a 7-tool `grep` cascade to 4 clean graph tools.
   Non-Elixir control (graph-ui TS, 46 files): baseline and C1 binaries produce
   byte-identical graphs (338 nodes/764 edges) — Phase 0 confirmed Elixir-scoped.
+- 2026-07-24 — Test-coverage audit + backfill. Found three added code paths
+  with no test exercising them: PR-0d's multi-alias `Foo.{Bar, Baz}` expansion
+  and `alias X, as: Y` handling (the grammar_imports fixture used only plain
+  directives), and PR-0c's *nested* `defimpl` prefix. Added
+  `elixir_alias_forms` and `elixir_nested_defimpl` (both fail on main, pass
+  here) plus `elixir_call_under_control_flow` — a stays-green guard that a call
+  inside an `if`/`case` macro still attributes to the enclosing def (PR-0b).
+  The corpus-impact audit that prompted this: PR-0e's D7 var-guard and PR-0c's
+  nesting showed near-zero movement on the three repos because their triggering
+  patterns are rare/absent there — real defects, but the unit tests (not the
+  corpus numbers) are their evidence, so the untested string-parsing paths were
+  the genuine risk.
 
 ## 7. Risks and mitigations
 

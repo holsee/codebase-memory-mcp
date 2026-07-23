@@ -52,6 +52,15 @@ static int __attribute__((unused)) has_import(CBMFileResult *r, const char *path
     return 0;
 }
 
+/* True if an import has the given local (alias) name. */
+static int __attribute__((unused)) has_import_local(CBMFileResult *r, const char *local) {
+    for (int i = 0; i < r->imports.count; i++) {
+        if (r->imports.items[i].local_name && strcmp(r->imports.items[i].local_name, local) == 0)
+            return 1;
+    }
+    return 0;
+}
+
 /* Count definitions with a given label. */
 static int count_defs_with_label(CBMFileResult *r, const char *label) {
     int count = 0;
@@ -1024,6 +1033,72 @@ TEST(elixir_variable_binding) {
     }
     ASSERT(bound_total == 1); /* the `=` match binds `total` */
     ASSERT(spurious == 0);    /* the bare expressions bind nothing */
+    cbm_free_result(r);
+    PASS();
+}
+
+/* PR-0d alias forms that the plain-fixture grammar_imports test does not reach:
+ * multi-alias `Foo.{Bar, Baz}` must expand to both, and `alias X, as: Y` must
+ * record the local name Y. (These exercise elixir_expand_multi_alias and
+ * elixir_find_as_alias, previously untested.) */
+TEST(elixir_alias_forms) {
+    CBMFileResult *r = extract("defmodule App do\n"
+                               "  alias MyApp.Accounts.{User, Team}\n"
+                               "  alias MyApp.Repo, as: DB\n"
+                               "  def run, do: :ok\n"
+                               "end\n",
+                               CBM_LANG_ELIXIR, "t", "aliases.ex");
+    ASSERT_NOT_NULL(r);
+    ASSERT_FALSE(r->has_error);
+    /* multi-alias expands to both fully-qualified modules */
+    ASSERT(has_import(r, "MyApp.Accounts.User"));
+    ASSERT(has_import(r, "MyApp.Accounts.Team"));
+    /* `as:` records the local alias name */
+    ASSERT(has_import(r, "MyApp.Repo"));
+    ASSERT(has_import_local(r, "DB"));
+    cbm_free_result(r);
+    PASS();
+}
+
+/* PR-0c: a defimpl nested inside a module must also carry the enclosing module
+ * prefix (Outer.Protocol.Target), not just Protocol.Target. */
+TEST(elixir_nested_defimpl) {
+    CBMFileResult *r = extract("defmodule Outer do\n"
+                               "  defimpl String.Chars, for: MyType do\n"
+                               "    def to_string(_), do: \"\"\n"
+                               "  end\n"
+                               "end\n",
+                               CBM_LANG_ELIXIR, "t", "impl.ex");
+    ASSERT_NOT_NULL(r);
+    ASSERT_FALSE(r->has_error);
+    ASSERT(has_def(r, "Class", "Outer.String.Chars.MyType"));
+    cbm_free_result(r);
+    PASS();
+}
+
+/* PR-0b: a call inside a control-flow macro (if/case — themselves `call` nodes
+ * in tree-sitter-elixir) must still attribute to the enclosing def, not to the
+ * control-flow call. Guards the non-def-ancestor skip in cbm_find_enclosing_func. */
+TEST(elixir_call_under_control_flow) {
+    CBMFileResult *r = extract("defmodule M do\n"
+                               "  def dispatch(x) do\n"
+                               "    if x do\n"
+                               "      handle(x)\n"
+                               "    end\n"
+                               "  end\n"
+                               "end\n",
+                               CBM_LANG_ELIXIR, "t", "cf.ex");
+    ASSERT_NOT_NULL(r);
+    ASSERT_FALSE(r->has_error);
+    int saw = 0;
+    for (int i = 0; i < r->calls.count; i++) {
+        if (strcmp(r->calls.items[i].callee_name, "handle") == 0) {
+            saw = 1;
+            ASSERT_NOT_NULL(r->calls.items[i].enclosing_func_qn);
+            ASSERT(strstr(r->calls.items[i].enclosing_func_qn, "dispatch") != NULL);
+        }
+    }
+    ASSERT(saw);
     cbm_free_result(r);
     PASS();
 }
@@ -4913,6 +4988,9 @@ SUITE(extraction) {
     RUN_TEST(elixir_protocol_impl);
     RUN_TEST(elixir_guarded_caller_attribution);
     RUN_TEST(elixir_nested_module);
+    RUN_TEST(elixir_alias_forms);
+    RUN_TEST(elixir_nested_defimpl);
+    RUN_TEST(elixir_call_under_control_flow);
     RUN_TEST(elixir_variable_binding);
     RUN_TEST(haskell_function);
     RUN_TEST(ocaml_function);
