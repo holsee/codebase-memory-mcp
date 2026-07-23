@@ -944,6 +944,59 @@ TEST(elixir_function) {
     PASS();
 }
 
+TEST(elixir_guarded_function) {
+    CBMFileResult *r = extract("defmodule M do\n"
+                               "  def positive?(x) when is_integer(x) and x > 0, do: true\n"
+                               "  defp shout(s) when is_binary(s) do\n    String.upcase(s)\n  end\n"
+                               "  def zero_arity when node() == :a@b, do: :ok\n"
+                               "end\n",
+                               CBM_LANG_ELIXIR, "t", "guards.ex");
+    ASSERT_NOT_NULL(r);
+    ASSERT_FALSE(r->has_error);
+    ASSERT(has_def(r, "Function", "positive?"));
+    ASSERT(has_def(r, "Function", "shout"));
+    ASSERT(has_def(r, "Function", "zero_arity"));
+    cbm_free_result(r);
+    PASS();
+}
+
+TEST(elixir_def_like_forms) {
+    CBMFileResult *r = extract("defmodule M do\n"
+                               "  defmacro assert_ok(x), do: x\n"
+                               "  defmacrop hidden(x), do: x\n"
+                               "  defguard is_adult(age) when is_integer(age) and age >= 18\n"
+                               "  defguardp is_teen(age) when age in 13..19\n"
+                               "  defdelegate size(map), to: MapImpl\n"
+                               "end\n",
+                               CBM_LANG_ELIXIR, "t", "forms.ex");
+    ASSERT_NOT_NULL(r);
+    ASSERT_FALSE(r->has_error);
+    ASSERT(has_def(r, "Function", "assert_ok"));
+    ASSERT(has_def(r, "Function", "hidden"));
+    ASSERT(has_def(r, "Function", "is_adult"));
+    ASSERT(has_def(r, "Function", "is_teen"));
+    ASSERT(has_def(r, "Function", "size"));
+    cbm_free_result(r);
+    PASS();
+}
+
+TEST(elixir_protocol_impl) {
+    CBMFileResult *r = extract("defprotocol Size do\n"
+                               "  def size(data)\n"
+                               "end\n"
+                               "defimpl Size, for: BitString do\n"
+                               "  def size(s) when is_binary(s), do: byte_size(s)\n"
+                               "end\n",
+                               CBM_LANG_ELIXIR, "t", "size.ex");
+    ASSERT_NOT_NULL(r);
+    ASSERT_FALSE(r->has_error);
+    ASSERT(has_def(r, "Class", "Size"));
+    ASSERT(has_def(r, "Function", "size"));
+    ASSERT(has_def(r, "Class", "Size.BitString"));
+    cbm_free_result(r);
+    PASS();
+}
+
 /* --- Haskell --- */
 TEST(haskell_function) {
     CBMFileResult *r = extract("add :: Int -> Int -> Int\nadd x y = x + y\n\nmultiply :: Int -> "
@@ -4780,6 +4833,9 @@ SUITE(extraction) {
 
     /* Functional */
     RUN_TEST(elixir_function);
+    RUN_TEST(elixir_guarded_function);
+    RUN_TEST(elixir_def_like_forms);
+    RUN_TEST(elixir_protocol_impl);
     RUN_TEST(haskell_function);
     RUN_TEST(ocaml_function);
     RUN_TEST(erlang_function);

@@ -4529,7 +4529,14 @@ static TSNode elixir_call_args(TSNode node) {
     return args;
 }
 
-// Handle Elixir def/defp/defmacro — extract function definition.
+// True for Elixir def-like macros that declare a private callable.
+static bool elixir_def_is_private(const char *macro) {
+    return strcmp(macro, "defp") == 0 || strcmp(macro, "defmacrop") == 0 ||
+           strcmp(macro, "defguardp") == 0 || strcmp(macro, "defnp") == 0;
+}
+
+// Handle Elixir def/defp/defmacro(p)/defguard(p)/defn(p)/defdelegate —
+// extract function definition.
 static void extract_elixir_func_def(CBMExtractCtx *ctx, TSNode node, const char *macro) {
     CBMArena *a = ctx->arena;
     TSNode args = elixir_call_args(node);
@@ -4543,6 +4550,15 @@ static void extract_elixir_func_def(CBMExtractCtx *ctx, TSNode node, const char 
     }
 
     const char *fk = ts_node_type(first_arg);
+    // Guarded head: `def foo(x) when x > 0` parses the whole head as
+    // binary_operator(left: call|identifier, "when", right: guard-expr).
+    if (strcmp(fk, "binary_operator") == 0) {
+        TSNode left = ts_node_child_by_field_name(first_arg, TS_FIELD("left"));
+        if (!ts_node_is_null(left)) {
+            first_arg = left;
+            fk = ts_node_type(first_arg);
+        }
+    }
     char *name = NULL;
     if (strcmp(fk, "call") == 0 && ts_node_child_count(first_arg) > 0) {
         name = cbm_node_text(a, ts_node_child(first_arg, 0), ctx->source);
@@ -4561,7 +4577,7 @@ static void extract_elixir_func_def(CBMExtractCtx *ctx, TSNode node, const char 
     def.file_path = ctx->rel_path;
     def.start_line = ts_node_start_point(node).row + TS_LINE_OFFSET;
     def.end_line = ts_node_end_point(node).row + TS_LINE_OFFSET;
-    def.is_exported = (strcmp(macro, "def") == 0 || strcmp(macro, "defmacro") == 0);
+    def.is_exported = !elixir_def_is_private(macro);
     cbm_defs_push(&ctx->result->defs, a, def);
 }
 
@@ -4580,6 +4596,54 @@ static TSNode emit_elixir_module_class(CBMExtractCtx *ctx, TSNode cur) {
     char *name = cbm_node_text(a, name_node, ctx->source);
     if (!name || !name[0]) {
         return null_node;
+    }
+    CBMDefinition def;
+    memset(&def, 0, sizeof(def));
+    def.name = name;
+    def.qualified_name = cbm_fqn_compute(a, ctx->project, ctx->rel_path, name);
+    def.label = "Class";
+    def.file_path = ctx->rel_path;
+    def.start_line = ts_node_start_point(cur).row + TS_LINE_OFFSET;
+    def.end_line = ts_node_end_point(cur).row + TS_LINE_OFFSET;
+    def.is_exported = true;
+    cbm_defs_push(&ctx->result->defs, a, def);
+    return cbm_find_child_by_kind(cur, "do_block");
+}
+
+// Emit Class for `defimpl Protocol, for: Target` under the conventional
+// module name Protocol.Target. Returns do_block or null.
+static TSNode emit_elixir_impl_class(CBMExtractCtx *ctx, TSNode cur) {
+    CBMArena *a = ctx->arena;
+    TSNode null_node = {0};
+    TSNode args = elixir_call_args(cur);
+    if (ts_node_is_null(args)) {
+        return null_node;
+    }
+    TSNode proto_node = ts_node_child(args, 0);
+    if (ts_node_is_null(proto_node)) {
+        return null_node;
+    }
+    char *name = cbm_node_text(a, proto_node, ctx->source);
+    if (!name || !name[0]) {
+        return null_node;
+    }
+    // `for:` target lives in a trailing keywords list: keywords > pair > value.
+    uint32_t ac = ts_node_child_count(args);
+    for (uint32_t i = 1; i < ac; i++) {
+        TSNode kw = ts_node_child(args, i);
+        if (ts_node_is_null(kw) || strcmp(ts_node_type(kw), "keywords") != 0) {
+            continue;
+        }
+        TSNode pair = ts_node_child(kw, 0);
+        if (ts_node_is_null(pair) || ts_node_child_count(pair) == 0) {
+            break;
+        }
+        TSNode val = ts_node_child(pair, ts_node_child_count(pair) - 1);
+        char *target = ts_node_is_null(val) ? NULL : cbm_node_text(a, val, ctx->source);
+        if (target && target[0]) {
+            name = cbm_arena_sprintf(a, "%s.%s", name, target);
+        }
+        break;
     }
     CBMDefinition def;
     memset(&def, 0, sizeof(def));
@@ -4619,10 +4683,15 @@ static void extract_elixir_call(CBMExtractCtx *ctx, TSNode node, const CBMLangSp
         }
 
         if (strcmp(macro, "def") == 0 || strcmp(macro, "defp") == 0 ||
-            strcmp(macro, "defmacro") == 0) {
+            strcmp(macro, "defmacro") == 0 || strcmp(macro, "defmacrop") == 0 ||
+            strcmp(macro, "defguard") == 0 || strcmp(macro, "defguardp") == 0 ||
+            strcmp(macro, "defn") == 0 || strcmp(macro, "defnp") == 0 ||
+            strcmp(macro, "defdelegate") == 0) {
             extract_elixir_func_def(ctx, cur, macro);
-        } else if (strcmp(macro, "defmodule") == 0) {
-            TSNode do_block = emit_elixir_module_class(ctx, cur);
+        } else if (strcmp(macro, "defmodule") == 0 || strcmp(macro, "defprotocol") == 0 ||
+                   strcmp(macro, "defimpl") == 0) {
+            TSNode do_block = (strcmp(macro, "defimpl") == 0) ? emit_elixir_impl_class(ctx, cur)
+                                                              : emit_elixir_module_class(ctx, cur);
             if (!ts_node_is_null(do_block)) {
                 uint32_t dbc = ts_node_child_count(do_block);
                 for (int di = (int)dbc - SKIP_CHAR; di >= 0; di--) {
