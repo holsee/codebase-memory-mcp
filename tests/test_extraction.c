@@ -997,6 +997,25 @@ TEST(elixir_protocol_impl) {
     PASS();
 }
 
+/* Nested defmodule must carry the enclosing module in its QN (D6/PR-0c):
+ * `defmodule Foo do defmodule Bar` yields the module Foo.Bar, not bare Bar. */
+TEST(elixir_nested_module) {
+    CBMFileResult *r = extract("defmodule Foo do\n"
+                               "  defmodule Bar do\n"
+                               "    def baz, do: :ok\n"
+                               "  end\n"
+                               "end\n",
+                               CBM_LANG_ELIXIR, "t", "nested.ex");
+    ASSERT_NOT_NULL(r);
+    ASSERT_FALSE(r->has_error);
+    ASSERT(has_def(r, "Class", "Foo"));
+    ASSERT(has_def(r, "Class", "Foo.Bar"));
+    /* The bare inner name must NOT appear as a standalone module. */
+    ASSERT_FALSE(has_def(r, "Class", "Bar"));
+    cbm_free_result(r);
+    PASS();
+}
+
 /* Calls inside a GUARDED def must attribute to the enclosing function, not the
  * module (D2/PR-0b). Pre-fix, compute_elixir_func_qn did not recognise guarded
  * heads, so `String.upcase(s)` sourced at the module QN "t.guards". */
@@ -4862,6 +4881,7 @@ SUITE(extraction) {
     RUN_TEST(elixir_def_like_forms);
     RUN_TEST(elixir_protocol_impl);
     RUN_TEST(elixir_guarded_caller_attribution);
+    RUN_TEST(elixir_nested_module);
     RUN_TEST(haskell_function);
     RUN_TEST(ocaml_function);
     RUN_TEST(erlang_function);

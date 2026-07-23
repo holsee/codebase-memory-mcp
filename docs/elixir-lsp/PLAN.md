@@ -271,13 +271,27 @@ Estimated total: ~5–8k lines across ~10 PRs.
   expectation and header comment); a `test_lang_contract.c`-style case
   asserting caller QN is the function, not the module.
 
-**PR-0c `fix(elixir): name/arity identity and nested module QNs`** (D3, D6)
-- Compute arity (count params; `\\` defaults fan out `min..max` — one def
-  per arity, or one def annotated with arity range if def dedup is
-  preferred; decide in-PR, document in the file header). Join nested
-  `defmodule` QNs with the parent path. Dedupe multi-clause heads to one
-  def per `name/arity` spanning first-to-last clause lines.
-- AC: extraction tests for multi-clause, default-args, nested modules.
+**PR-0c `fix(elixir): nested module QNs`** (D6) — **scope narrowed; see below**
+- Join nested `defmodule`/`defimpl` QNs with the enclosing module path
+  (`defmodule Foo do defmodule Bar` → `Foo.Bar`) via an AST ancestor walk,
+  mirroring the class-chain logic in `cbm_enclosing_func_qn`.
+- AC: extraction test `elixir_nested_module` (fails on main, passes here).
+
+> **D3 (name/arity identity) deferred to PR-1c — decided by the fable
+> consumer-impact analysis (2026-07-23), recorded in the log.** Arity-in-QN
+> (`Mod.foo/2`) is the correct identity model and the store already tolerates
+> `/` in QNs, but it **cannot land without the callee side** also emitting
+> `foo/2` — the CALLS resolver keys on `simple_name(qualified_name)` on both
+> the def and call-site ends (`registry.c`), so a def-side-only arity suffix
+> silently breaks every intra-module Elixir CALLS edge. The def QN, the
+> enclosing-caller QN, and the callee arity must change together, all
+> Elixir-gated. Since PR-1c computes call-site arity anyway (pipes, captures,
+> defaults), D3 moves there and lands atomically. Multi-clause span-merge also
+> moves to PR-1c: it needs module-qualified function QNs (else same-named
+> private helpers in different modules collide file-wide), which is part of
+> the same symmetric change. The store's `UNIQUE(project, qualified_name)`
+> already collapses multi-clause heads to one node today, so the only interim
+> loss is line-span precision — acceptable until PR-1c.
 
 **PR-0d `fix(elixir): scan module-body directives and classify them`** (D5)
 - Extend import parsing to walk `defmodule` do-blocks (and nested modules);
@@ -313,12 +327,23 @@ Estimated total: ~5–8k lines across ~10 PRs.
   transitive alias; import with `only:`; local same-module call; alias
   line-visibility; negative: variable-module call emits zero edges.
 
-**PR-1c `feat(elixir-lsp): arity semantics — pipes, captures, defaults`**
-- Rungs (b), (d); default-arg fan-out in the registry; `__MODULE__` and
-  multi-clause caller attribution polish.
-- AC: pipe resolves `fun/2` not `fun/1`; capture `&Mod.fun/2` resolves and
-  emits no spurious `fun/0`; `def foo(a, b \\ 1)` resolvable as both
-  arities.
+**PR-1c `feat(elixir-lsp): name/arity identity — QN suffix, pipes, captures, defaults`**
+(absorbs D3 from PR-0c)
+- **The symmetric arity change, landed atomically (fable analysis):** suffix
+  the def QN with `/arity` (`Mod.foo/2`); make the enclosing-caller QN
+  module+arity aware so it equals the def QN (parity invariant); compute
+  call-site arity on the callee (`arg_count`, +1 for a pipe subject, capture
+  `&Mod.fun/2`) so `simple_name`-keyed CALLS resolution matches on both ends.
+  All gated on `CBM_LANG_ELIXIR`; do **not** touch `registry.c`/`store.c`/
+  `fqn.c`/`graph_buffer.c`/UI. Default args fan out `min..max` (one def per
+  arity, same span). Multi-clause heads merge to one def per `name/arity`
+  spanning first-to-last clause (module-qualified so cross-module same-named
+  helpers don't collide). Rungs (b), (d); `__MODULE__`.
+- AC: `probe_elixir_module_calls` stays GREEN (the CALLS canary); pipe
+  resolves `fun/2` not `fun/1`; capture `&Mod.fun/2` resolves and emits no
+  spurious `fun/0`; `def foo(a, b \\ 1)` resolvable as both arities;
+  multi-clause merges to one node with a first-to-last span;
+  `test_lang_contract.c` Elixir CALLS stays GREEN.
 
 ### Phase 2 — Knowledge and cross-file
 
@@ -484,8 +509,8 @@ other languages). `scripts/test.sh` full suite is the per-PR guard.
 | Tracking issue opened, linked here | [#1](https://github.com/holsee/codebase-memory-mcp/issues/1) | ☑ 2026-07-23 |
 | Checkpoint B recorded (`testing/BASELINE.md`, `questions.md` frozen) | — | ☑ 2026-07-23 |
 | PR-0a guard-clause + def-like forms | `e18cb5c1` | ☑ 2026-07-23 |
-| PR-0b enclosing-function attribution | `feat/elixir-hybrid-lsp` | ☑ 2026-07-23 |
-| PR-0c name/arity + nested QNs | | ☐ |
+| PR-0b enclosing-function attribution | `d987aeca` | ☑ 2026-07-23 |
+| PR-0c nested module QNs (D6); D3 → PR-1c | | ☑ 2026-07-23 |
 | PR-0d module-body directives | | ☐ |
 | PR-0e vars + contract strength | | ☐ |
 | Checkpoint C1 recorded (`testing/AFTER-PHASE-0.md`) | — | ☐ |
@@ -539,6 +564,21 @@ other languages). `scripts/test.sh` full suite is the per-PR guard.
   env/known-red failures, zero regressions). Note: whole-file clang-format
   reflow of the repro file was reverted — test/repro files are not in the
   `lint-format` gate (LINT_SRCS), so the PR keeps a minimal diff.
+- 2026-07-23 — PR-0c **re-scoped after a fable consumer-impact analysis** of
+  the arity-in-QN question. Verdict: arity identity (`Mod.foo/2`) is correct
+  and the store supports it, but the CALLS resolver keys on
+  `simple_name(qualified_name)` at **both** the def and call-site ends
+  (`registry.c`), so a def-side-only arity suffix breaks every intra-module
+  Elixir CALLS edge — the def QN, enclosing-caller QN, and callee arity must
+  land together. That callee work is PR-1c, so **D3 moved to PR-1c** to land
+  atomically; PR-0c ships only D6 (nested-module QNs), which is independent
+  and safe. Empirical baseline for D3 (for PR-1c): multi-clause redundancy
+  44 % on plug / 19 % on analytics; `UNIQUE(project, qualified_name)` already
+  collapses clauses to one node, so foo/1 and foo/2 *wrongly* merge today —
+  that is the identity gap PR-1c closes. D6 shipped: `elixir_nested_module`
+  fails on main (`Foo.Bar` absent), passes here; CALLS canary
+  `probe_elixir_module_calls` and the 53-language CALLS-breadth probe stay
+  GREEN (Class-QN-only change, no resolver path touched).
 
 ## 7. Risks and mitigations
 

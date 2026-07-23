@@ -4582,6 +4582,35 @@ static void extract_elixir_func_def(CBMExtractCtx *ctx, TSNode node, const char 
 }
 
 // Emit Class definition for an Elixir defmodule node. Returns do_block or null.
+// Build the dotted prefix contributed by enclosing `defmodule` blocks so a
+// nested module gets its full name (Outer.Inner, not just Inner). Walks parent
+// `call` nodes whose target is `defmodule`, collecting names outermost-first.
+// Returns NULL when there is no enclosing module (top-level). Mirrors the
+// class-chain walk in cbm_enclosing_func_qn (helpers.c).
+static const char *elixir_enclosing_module_prefix(CBMExtractCtx *ctx, TSNode node) {
+    CBMArena *a = ctx->arena;
+    const char *chain = NULL;
+    for (TSNode cur = ts_node_parent(node); !ts_node_is_null(cur); cur = ts_node_parent(cur)) {
+        if (strcmp(ts_node_type(cur), "call") != 0 || ts_node_child_count(cur) == 0) {
+            continue;
+        }
+        char *macro = cbm_node_text(a, ts_node_child(cur, 0), ctx->source);
+        if (!macro || strcmp(macro, "defmodule") != 0) {
+            continue;
+        }
+        TSNode margs = elixir_call_args(cur);
+        if (ts_node_is_null(margs) || ts_node_child_count(margs) == 0) {
+            continue;
+        }
+        char *mname = cbm_node_text(a, ts_node_child(margs, 0), ctx->source);
+        if (!mname || !mname[0]) {
+            continue;
+        }
+        chain = chain ? cbm_arena_sprintf(a, "%s.%s", mname, chain) : mname;
+    }
+    return chain;
+}
+
 static TSNode emit_elixir_module_class(CBMExtractCtx *ctx, TSNode cur) {
     CBMArena *a = ctx->arena;
     TSNode null_node = {0};
@@ -4596,6 +4625,10 @@ static TSNode emit_elixir_module_class(CBMExtractCtx *ctx, TSNode cur) {
     char *name = cbm_node_text(a, name_node, ctx->source);
     if (!name || !name[0]) {
         return null_node;
+    }
+    const char *prefix = elixir_enclosing_module_prefix(ctx, cur);
+    if (prefix) {
+        name = cbm_arena_sprintf(a, "%s.%s", prefix, name);
     }
     CBMDefinition def;
     memset(&def, 0, sizeof(def));
@@ -4644,6 +4677,10 @@ static TSNode emit_elixir_impl_class(CBMExtractCtx *ctx, TSNode cur) {
             name = cbm_arena_sprintf(a, "%s.%s", name, target);
         }
         break;
+    }
+    const char *prefix = elixir_enclosing_module_prefix(ctx, cur);
+    if (prefix) {
+        name = cbm_arena_sprintf(a, "%s.%s", prefix, name);
     }
     CBMDefinition def;
     memset(&def, 0, sizeof(def));
