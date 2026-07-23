@@ -510,8 +510,8 @@ other languages). `scripts/test.sh` full suite is the per-PR guard.
 | Checkpoint B recorded (`testing/BASELINE.md`, `questions.md` frozen) | — | ☑ 2026-07-23 |
 | PR-0a guard-clause + def-like forms | `e18cb5c1` | ☑ 2026-07-23 |
 | PR-0b enclosing-function attribution | `d987aeca` | ☑ 2026-07-23 |
-| PR-0c nested module QNs (D6); D3 → PR-1c | | ☑ 2026-07-23 |
-| PR-0d module-body directives | | ☐ |
+| PR-0c nested module QNs (D6); D3 → PR-1c | `27af2583` | ☑ 2026-07-23 |
+| PR-0d module-body directives | | ☑ 2026-07-23 |
 | PR-0e vars + contract strength | | ☐ |
 | Checkpoint C1 recorded (`testing/AFTER-PHASE-0.md`) | — | ☐ |
 | PR-1a skeleton + wiring + originality rows | | ☐ |
@@ -579,6 +579,18 @@ other languages). `scripts/test.sh` full suite is the per-PR guard.
   fails on main (`Foo.Bar` absent), passes here; CALLS canary
   `probe_elixir_module_calls` and the 53-language CALLS-breadth probe stay
   GREEN (Class-QN-only change, no resolver path touched).
+- 2026-07-23 — PR-0d landed (D5). Dedicated `parse_elixir_imports` recursively
+  descends `defmodule` do-blocks matching the four directives
+  (import/alias/require/use), handling `as:` aliases and `Foo.{Bar, Baz}`
+  multi-alias; replaces the root-only `parse_generic_imports("call")` that both
+  missed nested directives and mis-read the root `defmodule` as an import.
+  Test fixture rewritten to the idiomatic nested form (fails on main, passes
+  here). Plug IMPORTS(ex) **40 → 92**. Scope note: directive-kind (which of the
+  four) is *not* recorded in edge metadata — `CBMImport` has no kind field and
+  adding one ripples through the shared all-language edge-emission pipeline;
+  deferred (the four are semantically distinct for the resolver but all map to
+  an IMPORTS edge for the graph). Full suite pending; extraction + lang_contract
+  + grammar_imports green.
 
 ## 7. Risks and mitigations
 
