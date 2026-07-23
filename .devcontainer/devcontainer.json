@@ -1,0 +1,47 @@
+{
+  "name": "codebase-memory-mcp",
+  "build": { "dockerfile": "Dockerfile" },
+
+  "features": {
+    // Node 22 — graph-ui build and pkg/npm wrapper tests (CI uses node 22).
+    "ghcr.io/devcontainers/features/node:1": { "version": "22" },
+    // gh — PR/issue workflow per CONTRIBUTING.md.
+    "ghcr.io/devcontainers/features/github-cli:1": {}
+  },
+
+  // Sanitiser-instrumented test binaries (ASan/UBSan/TSan via scripts/test.sh
+  // and `make test-tsan`) need ptrace and an unrestricted seccomp profile
+  // inside containers. If TSan aborts at startup with mmap errors, the host
+  // kernel's ASLR entropy is too high for the container: run the suite under
+  // `setarch $(uname -m) -R` or set `sysctl vm.mmap_rnd_bits=28` on the host.
+  "runArgs": [
+    "--cap-add=SYS_PTRACE",
+    "--security-opt", "seccomp=unconfined"
+  ],
+
+  "containerEnv": {
+    "CCACHE_DIR": "/home/vscode/.cache/ccache"
+  },
+
+  "mounts": [
+    // Compiler cache survives container rebuilds.
+    "source=cbm-ccache,target=/home/vscode/.cache/ccache,type=volume",
+    // Claude CLI credentials/config survive rebuilds (used by the
+    // docs/elixir-lsp/PLAN.md §5.4 rubric evaluation: claude -p --model opus).
+    "source=cbm-claude-config,target=/home/vscode/.claude,type=volume"
+  ],
+
+  // Activate the repo's pre-commit gate (lint + security audit + build +
+  // tests), install the Claude CLI for the evaluation protocol, then do a
+  // full build so the toolchain is validated before first use.
+  "postCreateCommand": "sudo chown -R vscode:vscode /home/vscode/.cache/ccache /home/vscode/.claude && git config core.hooksPath scripts/hooks && npm install -g @anthropic-ai/claude-code && scripts/build.sh",
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "llvm-vs-code-extensions.vscode-clangd",
+        "ms-vscode.makefile-tools"
+      ]
+    }
+  }
+}

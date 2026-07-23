@@ -183,6 +183,10 @@ From `CONTRIBUTING.md` and observed practice — every PR in this plan:
    section rules (`/* ── Section ─── */`).
 7. **Test suite wiring is five points** (Makefile var, `ALL_TEST_SRCS`,
    extern, `RUN_SELECTED_SUITE`, and the shard union guard verifies it).
+8. **Reproducible environment**: `.devcontainer/` provides the full
+   toolchain at CI-pinned versions (clang-format-20, clang-tidy-20,
+   cppcheck 2.20.0, Node 22, sqlite3, Claude CLI for §5.4). Prefer working
+   inside it; the pre-commit hook then has everything it needs.
 
 ---
 
@@ -500,6 +504,8 @@ other languages). `scripts/test.sh` full suite is the per-PR guard.
 - 2026-07-23 — Plan authored on `feat/elixir-hybrid-lsp`. Research basis:
   repo audit (defects D1–D8), integration-contract map, Expert/tags.scm
   design study. Expert cloned at `~/workspace/_oss/expert` for reference.
+- 2026-07-23 — Dev container added (`.devcontainer/`) mirroring the CI
+  toolchain; includes the evaluation-protocol tools (sqlite3, Claude CLI).
 
 ## 7. Risks and mitigations
 
