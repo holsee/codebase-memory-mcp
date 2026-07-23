@@ -1,6 +1,6 @@
 # Elixir Hybrid LSP — Execution Plan
 
-**Status:** Proposed · **Branch:** `feat/elixir-hybrid-lsp` · **Tracking issue:** _to be opened before first code PR_
+**Status:** In progress · **Branch:** `feat/elixir-hybrid-lsp` (fork `holsee/codebase-memory-mcp`) · **Tracking issue:** [holsee/codebase-memory-mcp#1](https://github.com/holsee/codebase-memory-mcp/issues/1)
 **Last updated:** 2026-07-23
 
 This document is the single source of truth for bringing Elixir to full Hybrid
@@ -481,9 +481,9 @@ other languages). `scripts/test.sh` full suite is the per-PR guard.
 
 | Item | PR | Status |
 |---|---|---|
-| Tracking issue opened, linked here | — | ☐ |
-| Checkpoint B recorded (`testing/BASELINE.md`, `questions.md` frozen) | — | ☐ |
-| PR-0a guard-clause + def-like forms | | ☐ |
+| Tracking issue opened, linked here | [#1](https://github.com/holsee/codebase-memory-mcp/issues/1) | ☑ 2026-07-23 |
+| Checkpoint B recorded (`testing/BASELINE.md`, `questions.md` frozen) | — | ☑ 2026-07-23 |
+| PR-0a guard-clause + def-like forms | `e18cb5c1` | ☑ 2026-07-23 |
 | PR-0b enclosing-function attribution | | ☐ |
 | PR-0c name/arity + nested QNs | | ☐ |
 | PR-0d module-body directives | | ☐ |
@@ -506,6 +506,22 @@ other languages). `scripts/test.sh` full suite is the per-PR guard.
   design study. Expert cloned at `~/workspace/_oss/expert` for reference.
 - 2026-07-23 — Dev container added (`.devcontainer/`) mirroring the CI
   toolchain; includes the evaluation-protocol tools (sqlite3, Claude CLI).
+- 2026-07-23 — Moved to fork `holsee/codebase-memory-mcp` (upstream issue
+  DeusData#1239 closed in favour of fork issue #1).
+- 2026-07-23 — Checkpoint B recorded (`testing/BASELINE.md`): guard-head
+  defs 0 % everywhere (D1 confirmed); Function-sourced CALLS 56–70 %
+  (plan's ~0 % prediction was too pessimistic — target > 90 % stands);
+  zero Elixir `lsp_*` strategies. Rubric 17/17 PASS **with instrument
+  critique**: agentic opus routes around graph gaps (E1 answered via
+  7-step text fallback because `put_resp_header` had no node) — C1/C2
+  runs must use `--disallowedTools "Bash,Read,Grep,Glob"` and grade
+  multi-conjunct keys strictly; tool-path shrinkage is part of the claim.
+- 2026-07-23 — PR-0a landed (`e18cb5c1`). Plug spot-check: guarded
+  functions with a node 58/82 → **82/82**; nodes 989 → 1,030.
+  Deviation: defstruct/defexception node emission deferred to Phase 2
+  (data, not callables). Known local-env caveat: pre-existing
+  `src/ui/httpd.h` clang-tidy finding blocks the full pre-commit hook on
+  this machine; cppcheck + clang-format legs verified green directly.
 
 ## 7. Risks and mitigations
 
