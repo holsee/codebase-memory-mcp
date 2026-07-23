@@ -4682,11 +4682,7 @@ static void extract_elixir_call(CBMExtractCtx *ctx, TSNode node, const CBMLangSp
             continue;
         }
 
-        if (strcmp(macro, "def") == 0 || strcmp(macro, "defp") == 0 ||
-            strcmp(macro, "defmacro") == 0 || strcmp(macro, "defmacrop") == 0 ||
-            strcmp(macro, "defguard") == 0 || strcmp(macro, "defguardp") == 0 ||
-            strcmp(macro, "defn") == 0 || strcmp(macro, "defnp") == 0 ||
-            strcmp(macro, "defdelegate") == 0) {
+        if (cbm_elixir_def_macro(macro)) {
             extract_elixir_func_def(ctx, cur, macro);
         } else if (strcmp(macro, "defmodule") == 0 || strcmp(macro, "defprotocol") == 0 ||
                    strcmp(macro, "defimpl") == 0) {

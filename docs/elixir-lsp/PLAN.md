@@ -484,7 +484,7 @@ other languages). `scripts/test.sh` full suite is the per-PR guard.
 | Tracking issue opened, linked here | [#1](https://github.com/holsee/codebase-memory-mcp/issues/1) | ☑ 2026-07-23 |
 | Checkpoint B recorded (`testing/BASELINE.md`, `questions.md` frozen) | — | ☑ 2026-07-23 |
 | PR-0a guard-clause + def-like forms | `e18cb5c1` | ☑ 2026-07-23 |
-| PR-0b enclosing-function attribution | | ☐ |
+| PR-0b enclosing-function attribution | `feat/elixir-hybrid-lsp` | ☑ 2026-07-23 |
 | PR-0c name/arity + nested QNs | | ☐ |
 | PR-0d module-body directives | | ☐ |
 | PR-0e vars + contract strength | | ☐ |
@@ -522,6 +522,23 @@ other languages). `scripts/test.sh` full suite is the per-PR guard.
   (data, not callables). Known local-env caveat: pre-existing
   `src/ui/httpd.h` clang-tidy finding blocks the full pre-commit hook on
   this machine; cppcheck + clang-format legs verified green directly.
+- 2026-07-23 — PR-0b landed. **D2 framing corrected by measurement:**
+  plain-`def` enclosing-function attribution was *already* GREEN on main
+  (compute_elixir_func_qn already gated def/defp/defmacro); the
+  `repro_grammar_functional_elixir` "dim 7 RED" comment was stale (the
+  non-guarded fixture passed). The real gap was (a) **guarded** heads
+  (`def f(x) when …`, a binary_operator first-arg) and (b) the def-like
+  forms PR-0a added (defmacrop/defguard(p)/defn(p)/defdelegate) — none
+  recognised by compute_elixir_func_qn, so their bodies' calls sourced to
+  the module. Fix: shared `cbm_elixir_def_macro()` keyword predicate +
+  guarded-head descent in both `cbm_find_enclosing_func` (now takes
+  `source` to verify the def target) and `compute_elixir_func_qn`. The
+  repro fixture is now guarded so it is a true before/after guard: FAILS
+  dim 7 on main ("1 in-body CALLS sourced at Module"), PASSES on PR-0b.
+  Full suite 6780/0; repro battery 318/6 identical to main (6 pre-existing
+  env/known-red failures, zero regressions). Note: whole-file clang-format
+  reflow of the repro file was reverted — test/repro files are not in the
+  `lint-format` gate (LINT_SRCS), so the PR keeps a minimal diff.
 
 ## 7. Risks and mitigations
 

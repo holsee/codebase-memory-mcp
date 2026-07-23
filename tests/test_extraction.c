@@ -997,6 +997,31 @@ TEST(elixir_protocol_impl) {
     PASS();
 }
 
+/* Calls inside a GUARDED def must attribute to the enclosing function, not the
+ * module (D2/PR-0b). Pre-fix, compute_elixir_func_qn did not recognise guarded
+ * heads, so `String.upcase(s)` sourced at the module QN "t.guards". */
+TEST(elixir_guarded_caller_attribution) {
+    CBMFileResult *r = extract("defmodule M do\n"
+                               "  def shout(s) when is_binary(s) do\n"
+                               "    String.upcase(s)\n"
+                               "  end\n"
+                               "end\n",
+                               CBM_LANG_ELIXIR, "t", "guards.ex");
+    ASSERT_NOT_NULL(r);
+    ASSERT_FALSE(r->has_error);
+    int saw_upcase = 0;
+    for (int i = 0; i < r->calls.count; i++) {
+        if (strstr(r->calls.items[i].callee_name, "upcase") != NULL) {
+            saw_upcase = 1;
+            ASSERT_NOT_NULL(r->calls.items[i].enclosing_func_qn);
+            ASSERT(strstr(r->calls.items[i].enclosing_func_qn, "shout") != NULL);
+        }
+    }
+    ASSERT(saw_upcase);
+    cbm_free_result(r);
+    PASS();
+}
+
 /* --- Haskell --- */
 TEST(haskell_function) {
     CBMFileResult *r = extract("add :: Int -> Int -> Int\nadd x y = x + y\n\nmultiply :: Int -> "
@@ -4836,6 +4861,7 @@ SUITE(extraction) {
     RUN_TEST(elixir_guarded_function);
     RUN_TEST(elixir_def_like_forms);
     RUN_TEST(elixir_protocol_impl);
+    RUN_TEST(elixir_guarded_caller_attribution);
     RUN_TEST(haskell_function);
     RUN_TEST(ocaml_function);
     RUN_TEST(erlang_function);
