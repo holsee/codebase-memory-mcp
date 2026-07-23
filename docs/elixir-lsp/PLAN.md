@@ -511,8 +511,8 @@ other languages). `scripts/test.sh` full suite is the per-PR guard.
 | PR-0a guard-clause + def-like forms | `e18cb5c1` | ☑ 2026-07-23 |
 | PR-0b enclosing-function attribution | `d987aeca` | ☑ 2026-07-23 |
 | PR-0c nested module QNs (D6); D3 → PR-1c | `27af2583` | ☑ 2026-07-23 |
-| PR-0d module-body directives | | ☑ 2026-07-23 |
-| PR-0e vars + contract strength | | ☐ |
+| PR-0d module-body directives | `214b2fe6` | ☑ 2026-07-23 |
+| PR-0e vars + contract strength | | ☑ 2026-07-23 |
 | Checkpoint C1 recorded (`testing/AFTER-PHASE-0.md`) | — | ☐ |
 | PR-1a skeleton + wiring + originality rows | | ☐ |
 | PR-1b scopes/aliases/imports resolution | | ☐ |
@@ -589,8 +589,22 @@ other languages). `scripts/test.sh` full suite is the per-PR guard.
   four) is *not* recorded in edge metadata — `CBMImport` has no kind field and
   adding one ripples through the shared all-language edge-emission pipeline;
   deferred (the four are semantically distinct for the resolver but all map to
-  an IMPORTS edge for the graph). Full suite pending; extraction + lang_contract
+  an IMPORTS edge for the graph). Full suite 6781/0; extraction + lang_contract
   + grammar_imports green.
+- 2026-07-23 — PR-0e landed (D7, D8). **D7 framing corrected by measurement:**
+  the audit said the `{"binary_operator"}` var spec produced spurious vars from
+  every expression, but the variable walk only reaches module/top-level nodes
+  (never function bodies), so nested assignments aren't extracted at all — the
+  real spurious-var risk is top-level bare expressions (`a + b`) whose first
+  operand the default fallback mints as a Variable. Fix: an Elixir case in
+  `extract_var_names` that binds only on the `=` match operator (verified via
+  the `.operator` field — AST-probed to confirm) with an identifier LHS.
+  `elixir_variable_binding` fails on main (spurious operand bound), passes here.
+  D8: the Elixir regression contract was the suite's weakest (min_defs=1, no
+  names); strengthened to `2, {foo, A}` — name-verified, at parity with Ruby.
+  Scope note: in-function-body variable extraction remains out of scope for the
+  grammar layer (the walk is module-level by design); not needed for call
+  resolution. **Phase 0 (D1–D8) complete** — next is checkpoint C1.
 
 ## 7. Risks and mitigations
 

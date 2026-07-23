@@ -997,6 +997,37 @@ TEST(elixir_protocol_impl) {
     PASS();
 }
 
+/* Only the `=` match operator binds a variable. Elixir variable_node_types is
+ * {"binary_operator"}, so a top-level `a + b` / `a == b` expression would, via
+ * the default fallback, mint its first operand as a spurious Variable. The
+ * `=`-only guard (D7/PR-0e) prevents that while still binding real matches.
+ * (Only module/top-level statements are reached by the variable walk; in-body
+ * bindings are out of scope for the grammar layer.) */
+TEST(elixir_variable_binding) {
+    CBMFileResult *r = extract("total = 1 + 2\n"
+                               "a + b\n"
+                               "a == b\n",
+                               CBM_LANG_ELIXIR, "t", "calc.exs");
+    ASSERT_NOT_NULL(r);
+    ASSERT_FALSE(r->has_error);
+    int bound_total = 0, spurious = 0;
+    for (int i = 0; i < r->defs.count; i++) {
+        if (strcmp(r->defs.items[i].label, "Variable") != 0) {
+            continue;
+        }
+        const char *nm = r->defs.items[i].name;
+        if (strcmp(nm, "total") == 0) {
+            bound_total++;
+        } else if (strcmp(nm, "a") == 0 || strcmp(nm, "b") == 0) {
+            spurious++; /* operands of `a + b` / `a == b` must not bind */
+        }
+    }
+    ASSERT(bound_total == 1); /* the `=` match binds `total` */
+    ASSERT(spurious == 0);    /* the bare expressions bind nothing */
+    cbm_free_result(r);
+    PASS();
+}
+
 /* Nested defmodule must carry the enclosing module in its QN (D6/PR-0c):
  * `defmodule Foo do defmodule Bar` yields the module Foo.Bar, not bare Bar. */
 TEST(elixir_nested_module) {
@@ -4882,6 +4913,7 @@ SUITE(extraction) {
     RUN_TEST(elixir_protocol_impl);
     RUN_TEST(elixir_guarded_caller_attribution);
     RUN_TEST(elixir_nested_module);
+    RUN_TEST(elixir_variable_binding);
     RUN_TEST(haskell_function);
     RUN_TEST(ocaml_function);
     RUN_TEST(erlang_function);

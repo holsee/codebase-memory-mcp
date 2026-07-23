@@ -5471,6 +5471,27 @@ static void extract_var_names(CBMExtractCtx *ctx, TSNode node, const CBMLangSpec
     case CBM_LANG_GROOVY:
         extract_vars_jvm(ctx, node, a);
         return;
+    /* Elixir: variable_node_types is {"binary_operator"}, so this fires for
+     * EVERY binary op (a + b, a == b, a <> b). Only the match operator `=`
+     * binds a variable; anything else is an expression, not an assignment
+     * (D7 — the default fallback would otherwise mint the first identifier of
+     * `a + b` as a spurious variable). Bind only a plain identifier LHS
+     * (`x = expr`); destructuring patterns are left to a later pass. */
+    case CBM_LANG_ELIXIR: {
+        if (strcmp(kind, "binary_operator") != 0) {
+            return;
+        }
+        TSNode op = ts_node_child_by_field_name(node, TS_FIELD("operator"));
+        char *opt = ts_node_is_null(op) ? NULL : cbm_node_text(a, op, ctx->source);
+        if (!opt || strcmp(opt, "=") != 0) {
+            return;
+        }
+        TSNode left = ts_node_child_by_field_name(node, TS_FIELD("left"));
+        if (!ts_node_is_null(left) && strcmp(ts_node_type(left), "identifier") == 0) {
+            push_var_def(ctx, cbm_node_text(a, left, ctx->source), node);
+        }
+        return;
+    }
     /* Config + other */
     case CBM_LANG_YAML:
     case CBM_LANG_TOML:
