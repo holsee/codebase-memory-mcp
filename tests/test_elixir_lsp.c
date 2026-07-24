@@ -572,6 +572,38 @@ TEST(elixirlsp_capture_unknown_zero_edge) {
     PASS();
 }
 
+/* ── Precision pass (PR-2.6a) ──────────────────────────────────── */
+
+/* An Erlang atom-module call is classified lsp_ex_erlang (feeding the
+ * pipeline's external-call suppression) and never binds to a same-named
+ * project function. */
+TEST(elixirlsp_erlang_atom_module) {
+    const char *src = "defmodule M do\n"
+                      "  def insert(a, b), do: {a, b}\n"
+                      "  def run(t, v), do: :ets.insert(t, v)\n"
+                      "end\n";
+    CBMFileResult *r = extract_elixir(src);
+    ASSERT(r);
+    ASSERT(find_resolved(r, "run", ":ets.insert/2", "lsp_ex_erlang") != NULL);
+    ASSERT(find_resolved(r, "run", "test.main.insert", NULL) == NULL);
+    cbm_free_result(r);
+    PASS();
+}
+
+/* `import Enum, only: :functions` (category atom, not a name/arity list)
+ * admits the module's functions rather than nothing. */
+TEST(elixirlsp_import_only_atom_form) {
+    const char *src = "defmodule M do\n"
+                      "  import Enum, only: :functions\n"
+                      "  def run(l), do: map(l, fn x -> x end)\n"
+                      "end\n";
+    CBMFileResult *r = extract_elixir(src);
+    ASSERT(r);
+    ASSERT(find_resolved(r, "run", "Enum.map/2", "lsp_ex_stdlib") != NULL);
+    cbm_free_result(r);
+    PASS();
+}
+
 /* A resolver run over an empty module emits nothing and does not crash. */
 TEST(elixirlsp_empty_module) {
     const char *src = "defmodule Empty do\nend\n";
@@ -608,6 +640,8 @@ SUITE(elixir_lsp) {
     RUN_TEST(elixirlsp_capture_local);
     RUN_TEST(elixirlsp_capture_arity_selection);
     RUN_TEST(elixirlsp_capture_unknown_zero_edge);
+    RUN_TEST(elixirlsp_erlang_atom_module);
+    RUN_TEST(elixirlsp_import_only_atom_form);
     RUN_TEST(elixirlsp_import_only_stdlib);
     RUN_TEST(elixirlsp_import_only_arity_mismatch);
     RUN_TEST(elixirlsp_import_except);
