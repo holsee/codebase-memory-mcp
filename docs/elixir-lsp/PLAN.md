@@ -610,7 +610,7 @@ other languages). `scripts/test.sh` full suite is the per-PR guard.
 | PR-2.5a local captures (`lsp_ex_capture`, ladder rung d) | `69c058a8` | ☑ 2026-07-24 |
 | PR-2.5b import-selector resolution (`lsp_ex_import`, ladder rung c) | `058925ba` | ☑ 2026-07-24 |
 | PR-2.5c external-call textual-fallback suppression | `3961fbec` | ☑ 2026-07-24 |
-| PR-2.5d IMPORTS-edge resolution to Class nodes (C1 register item) | | ☐ |
+| PR-2.5d IMPORTS-edge resolution to Class nodes (C1 register item) | `c59327f0` | ☑ 2026-07-24 |
 | Checkpoint C2.5 recorded (`testing/AFTER-PHASE-2.5.md`) | — | ☐ |
 | PR-3a QA hardening | | ☐ |
 | PR-3b docs + promotion + release matrix | | ☐ |
@@ -900,6 +900,16 @@ other languages). `scripts/test.sh` full suite is the per-PR guard.
   rubric's false edge (`Keyword.get/3` → project `Plug.Router.get/3`) is gone;
   new probe `lrp_elixir_s9_stdlib_collision` pins it (CALLS must be 0). Plug
   CALLS(ex) 1202→1119 (−83 false edges). Full suite 6656/0.
+- 2026-07-24 — PR-2.5d landed (`c59327f0`). IMPORTS-edge resolution (the C1
+  register item, closed): an Elixir-gated strategy in
+  `cbm_pipeline_resolve_import_node` matches the dotted `module_path` exactly
+  against Class-node names (the PR-2b module-identity fact); a miss forms NO
+  edge (external modules), and the fuzzy fall-through is disabled for Elixir.
+  **Showcase oracle 0 → 2 correct IMPORTS edges** (Showcase.Math,
+  Showcase.Accounts.User); **plug: 92-all-to-root-`Plug` → 88 targeting the
+  actual modules** (Plug.Conn ×34, Plug.Test ×23, …). New probe
+  `lrp_elixir_s10_imports_resolution`; corpus-metrics.sh now lists IMPORTS
+  targets. Full suite 6657/0. **Phase 2.5 code complete** — next is C2.5.
   with no test exercising them: PR-0d's multi-alias `Foo.{Bar, Baz}` expansion
   and `alias X, as: Y` handling (the grammar_imports fixture used only plain
   directives), and PR-0c's *nested* `defimpl` prefix. Added
