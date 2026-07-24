@@ -77,6 +77,7 @@ extern const TSLanguage *tree_sitter_elixir(void);
 #define ELIXIR_CONF_STDLIB 0.85f    /* curated Kernel / core-module hit */
 #define ELIXIR_CONF_CROSS 0.85f     /* cross-file project-module hit (Phase 2b) */
 #define ELIXIR_CONF_USE 0.85f       /* use-macro-injected framework function (Phase 2c) */
+#define ELIXIR_CONF_CAPTURE 0.90f   /* local capture &fun/N — arity is literal (Phase 2.5a) */
 
 /* Maximum AST-walk recursion depth. Mirrors CBM_LSP_PERL_MAX_WALK_DEPTH: the
  * per-child recursion can stack-overflow on pathologically nested sources; past
@@ -499,6 +500,40 @@ static void elixir_resolve_calls_in(ElixirLSPContext *ctx,
             char *callee = elixir_node_text(ctx, target);
             if (callee && callee[0])
                 elixir_resolve_qualified(ctx, node, callee, (int)ts_node_start_point(node).row + 1);
+        }
+    } else if (strcmp(ts_node_type(node), "binary_operator") == 0) {
+        /* Local capture `&fun/N` (ladder rung (d)): there is no `call` node —
+         * the capture body is a `/` binary_operator under a `&` unary_operator,
+         * so the call-shaped branches above never see it. Only an `identifier`
+         * left-hand side is a local capture; a qualified `&Mod.fun/N` carries
+         * an inner `call` node and already resolves via the qualified rung.
+         * Require the node to BE the `/` operator (cbm_elixir_capture_arity
+         * also matches the left-of-`/` node, which must not be re-handled). */
+        int cap_arity = 0;
+        TSNode op = ts_node_child_by_field_name(node, "operator", 8);
+        bool is_slash = !ts_node_is_null(op) &&
+                        ts_node_end_byte(op) - ts_node_start_byte(op) == 1 &&
+                        ctx->source[ts_node_start_byte(op)] == '/';
+        if (is_slash && cbm_elixir_capture_arity(node, ctx->source, &cap_arity)) {
+            TSNode left = ts_node_child_by_field_name(node, "left", 4);
+            if (!ts_node_is_null(left) && strcmp(ts_node_type(left), "identifier") == 0) {
+                char *name = elixir_node_text(ctx, left);
+                if (name && name[0]) {
+                    const char *key = cbm_arena_sprintf(ctx->arena, "%s/%d", name, cap_arity);
+                    const CBMRegisteredFunc *f =
+                        cbm_registry_lookup_symbol(ctx->registry, ctx->module_qn, key);
+                    if (f && f->qualified_name) {
+                        elixir_emit(ctx, f->qualified_name, "lsp_ex_capture", ELIXIR_CONF_CAPTURE);
+                    } else {
+                        /* A captured Kernel builtin (`&length/1`) classifies. */
+                        const CBMRegisteredFunc *k =
+                            cbm_registry_lookup_symbol(ctx->registry, "Kernel", key);
+                        if (k && k->qualified_name)
+                            elixir_emit(ctx, k->qualified_name, "lsp_ex_kernel",
+                                        ELIXIR_CONF_STDLIB);
+                    }
+                }
+            }
         }
     }
 

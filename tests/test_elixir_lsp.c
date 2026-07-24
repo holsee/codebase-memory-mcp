@@ -465,6 +465,48 @@ TEST(elixirlsp_protocol_dispatch_cross) {
     PASS();
 }
 
+/* ── Local captures (PR-2.5a, ladder rung d) ───────────────────── */
+
+/* A local capture `&double/1` passed to Enum.map resolves lsp_ex_capture. */
+TEST(elixirlsp_capture_local) {
+    const char *src = "defmodule M do\n"
+                      "  def double(x), do: x * 2\n"
+                      "  def run(list), do: Enum.map(list, &double/1)\n"
+                      "end\n";
+    CBMFileResult *r = extract_elixir(src);
+    ASSERT(r);
+    ASSERT(find_resolved(r, "run", "double/1", "lsp_ex_capture") != NULL);
+    cbm_free_result(r);
+    PASS();
+}
+
+/* A capture selects the right arity of a multi-arity function. */
+TEST(elixirlsp_capture_arity_selection) {
+    const char *src = "defmodule M do\n"
+                      "  def f(a), do: a\n"
+                      "  def f(a, b), do: a + b\n"
+                      "  def run(list), do: Enum.reduce(list, 0, &f/2)\n"
+                      "end\n";
+    CBMFileResult *r = extract_elixir(src);
+    ASSERT(r);
+    ASSERT(find_resolved(r, "run", "f/2", "lsp_ex_capture") != NULL);
+    ASSERT(find_resolved(r, "run", "f/1", "lsp_ex_capture") == NULL);
+    cbm_free_result(r);
+    PASS();
+}
+
+/* A capture of an unknown function emits no edge (zero-edge guarantee). */
+TEST(elixirlsp_capture_unknown_zero_edge) {
+    const char *src = "defmodule M do\n"
+                      "  def run(list), do: Enum.map(list, &nope/1)\n"
+                      "end\n";
+    CBMFileResult *r = extract_elixir(src);
+    ASSERT(r);
+    ASSERT(find_resolved(r, "run", "nope", NULL) == NULL);
+    cbm_free_result(r);
+    PASS();
+}
+
 /* A resolver run over an empty module emits nothing and does not crash. */
 TEST(elixirlsp_empty_module) {
     const char *src = "defmodule Empty do\nend\n";
@@ -498,5 +540,8 @@ SUITE(elixir_lsp) {
     RUN_TEST(elixirlsp_cross_file_unknown_module);
     RUN_TEST(elixirlsp_use_injected_function);
     RUN_TEST(elixirlsp_protocol_dispatch_cross);
+    RUN_TEST(elixirlsp_capture_local);
+    RUN_TEST(elixirlsp_capture_arity_selection);
+    RUN_TEST(elixirlsp_capture_unknown_zero_edge);
     RUN_TEST(elixirlsp_empty_module);
 }
