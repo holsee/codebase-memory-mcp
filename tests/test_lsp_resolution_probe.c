@@ -1805,6 +1805,33 @@ TEST(lrp_elixir_s9_stdlib_collision) {
     PASS();
 }
 
+/* S10 — Elixir IMPORTS-edge resolution (Phase 2.5d, the C1 register item). An
+ * in-repo `alias Showx.User` resolves to the declaring module's Class node
+ * (exactly one IMPORTS edge); the external `require Logger` forms no edge
+ * (zero-edge discipline). Before 2.5d the dotted module name matched nothing
+ * (path/fuzzy strategies are shape-wrong for Elixir), so the count was 0. */
+TEST(lrp_elixir_s10_imports_resolution) {
+    static const LRP_File f[] = {
+        {"userx.ex", "defmodule Showx.User do\n  def name(u), do: u\nend\n"},
+        {"mainx.ex", "defmodule Showx.Main do\n"
+                     "  alias Showx.User\n"
+                     "  require Logger\n"
+                     "  def run(u), do: User.name(u)\n"
+                     "end\n"}};
+    LRP_Proj lp;
+    cbm_store_t *store = lrp_index(&lp, f, 2);
+    int imports = store ? cbm_store_count_edges_by_type(store, lp.project, "IMPORTS") : -1;
+    if (imports != 1) {
+        fprintf(stderr, "  [LRP] elixir/S10/imports_resolution FAIL imports=%d expected 1 "
+                        "(alias should resolve to the Class node; Logger must not)\n",
+                imports);
+        lrp_diag(store, lp.project, "elixir/S10/imports_resolution");
+    }
+    lrp_cleanup(&lp, store);
+    ASSERT_TRUE(imports == 1);
+    PASS();
+}
+
 /* ══════════════════════════════════════════════════════════════════════
  * SUITE registration
  * ══════════════════════════════════════════════════════════════════════ */
@@ -1923,6 +1950,7 @@ SUITE(lsp_resolution_probe) {
     RUN_TEST(lrp_elixir_s7_genserver_callback);
     RUN_TEST(lrp_elixir_s8_nested_sibling);
     RUN_TEST(lrp_elixir_s9_stdlib_collision);
+    RUN_TEST(lrp_elixir_s10_imports_resolution);
 
     /* ── USAGE-edge bonus probes ── */
     RUN_TEST(lrp_go_usage_struct_literal);

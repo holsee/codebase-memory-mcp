@@ -1492,6 +1492,55 @@ static const cbm_gbuf_node_t *resolve_sibling_file(const cbm_pipeline_ctx_t *ctx
     return found;
 }
 
+/* Elixir source gate for the module-name import strategy below. */
+static bool pkgmap_source_is_elixir(const char *rel) {
+    if (!rel) {
+        return false;
+    }
+    size_t n = strlen(rel);
+    return (n > 3 && strcmp(rel + n - 3, ".ex") == 0) ||
+           (n > 4 && strcmp(rel + n - 4, ".exs") == 0);
+}
+
+/* Elixir import resolution (Phase 2.5d, the C1 register item): an Elixir
+ * `alias`/`import`/`require`/`use` names a MODULE, and every `defmodule`
+ * emits a Class node whose `name` is the full dotted module name — the same
+ * module-identity fact the cross-file CALLS resolver exploits. Match the
+ * import's module_path against that name exactly (deterministic smallest-QN
+ * winner, mirroring Strategy 3's determinism rule). A miss returns NULL and
+ * the caller emits NO edge: the path-based and fuzzy-segment strategies are
+ * shape-wrong for Elixir — path candidates never equal module names, and
+ * segment matching is what collapsed every dotted import onto a same-named
+ * root module (plug: all 92 IMPORTS edges → the bare `Plug` node). A module
+ * absent from the tree (GenServer, Logger, deps) is external, and an external
+ * import forms no edge — the zero-edge discipline. */
+static const cbm_gbuf_node_t *pkgmap_resolve_elixir_module(const cbm_pipeline_ctx_t *ctx,
+                                                           const char *source_file_qn,
+                                                           const char *module_path) {
+    const cbm_gbuf_node_t **hits = NULL;
+    int n = 0;
+    if (cbm_gbuf_find_by_name(ctx->gbuf, module_path, &hits, &n) != 0 || !hits) {
+        return NULL;
+    }
+    const cbm_gbuf_node_t *best = NULL;
+    for (int i = 0; i < n; i++) {
+        const cbm_gbuf_node_t *cand = hits[i];
+        if (!cand || !cand->label || !cand->qualified_name) {
+            continue;
+        }
+        if (strcmp(cand->label, "Class") != 0 && strcmp(cand->label, "Module") != 0) {
+            continue;
+        }
+        if (source_file_qn && strcmp(cand->qualified_name, source_file_qn) == 0) {
+            continue;
+        }
+        if (!best || strcmp(cand->qualified_name, best->qualified_name) < 0) {
+            best = cand;
+        }
+    }
+    return best;
+}
+
 const cbm_gbuf_node_t *cbm_pipeline_resolve_import_node(const cbm_pipeline_ctx_t *ctx,
                                                         const char *source_rel,
                                                         const char *source_file_qn,
@@ -1499,6 +1548,12 @@ const cbm_gbuf_node_t *cbm_pipeline_resolve_import_node(const cbm_pipeline_ctx_t
                                                         CBMHashTable *namespace_map) {
     if (!ctx || !imp || !imp->module_path) {
         return NULL;
+    }
+
+    /* Elixir (Phase 2.5d): resolve the dotted module name against Class-node
+     * names, or form no edge — see pkgmap_resolve_elixir_module. */
+    if (pkgmap_source_is_elixir(source_rel)) {
+        return pkgmap_resolve_elixir_module(ctx, source_file_qn, imp->module_path);
     }
 
     /* Prefer exact header-file nodes for C/C++ includes so same-stem source or
