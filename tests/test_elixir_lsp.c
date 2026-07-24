@@ -269,6 +269,50 @@ TEST(elixirlsp_default_arg_fanout) {
     PASS();
 }
 
+/* ── Curated stdlib (PR-2a) ─────────────────────────────────────── */
+
+/* A bare call that is not a file-local def resolves to the Kernel auto-import. */
+TEST(elixirlsp_kernel_builtin) {
+    const char *src = "defmodule M do\n"
+                      "  def run(x) do\n"
+                      "    length(x)\n"
+                      "  end\n"
+                      "end\n";
+    CBMFileResult *r = extract_elixir(src);
+    ASSERT(r);
+    ASSERT(find_resolved(r, "run", "Kernel.length/1", "lsp_ex_kernel") != NULL);
+    cbm_free_result(r);
+    PASS();
+}
+
+/* A qualified call to a curated core module classifies lsp_ex_stdlib. */
+TEST(elixirlsp_stdlib_qualified) {
+    const char *src = "defmodule M do\n"
+                      "  def run(l) do\n"
+                      "    Enum.map(l, fn x -> x end)\n"
+                      "  end\n"
+                      "end\n";
+    CBMFileResult *r = extract_elixir(src);
+    ASSERT(r);
+    ASSERT(find_resolved(r, "run", "Enum.map/2", "lsp_ex_stdlib") != NULL);
+    cbm_free_result(r);
+    PASS();
+}
+
+/* Stdlib resolution is arity-precise: GenServer.call/2 vs /3. */
+TEST(elixirlsp_stdlib_arity) {
+    const char *src = "defmodule M do\n"
+                      "  def ask(pid), do: GenServer.call(pid, :x)\n"
+                      "  def ask3(pid), do: GenServer.call(pid, :x, 5000)\n"
+                      "end\n";
+    CBMFileResult *r = extract_elixir(src);
+    ASSERT(r);
+    ASSERT(find_resolved(r, "ask", "GenServer.call/2", "lsp_ex_stdlib") != NULL);
+    ASSERT(find_resolved(r, "ask3", "GenServer.call/3", "lsp_ex_stdlib") != NULL);
+    cbm_free_result(r);
+    PASS();
+}
+
 /* A resolver run over an empty module emits nothing and does not crash. */
 TEST(elixirlsp_empty_module) {
     const char *src = "defmodule Empty do\nend\n";
@@ -294,5 +338,8 @@ SUITE(elixir_lsp) {
     RUN_TEST(elixirlsp_arity_disambiguation);
     RUN_TEST(elixirlsp_pipe_arity);
     RUN_TEST(elixirlsp_default_arg_fanout);
+    RUN_TEST(elixirlsp_kernel_builtin);
+    RUN_TEST(elixirlsp_stdlib_qualified);
+    RUN_TEST(elixirlsp_stdlib_arity);
     RUN_TEST(elixirlsp_empty_module);
 }

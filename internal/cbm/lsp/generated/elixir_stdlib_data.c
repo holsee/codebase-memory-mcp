@@ -1,18 +1,28 @@
 /*
- * elixir_stdlib_data.c — hand-written Elixir stdlib seed.
+ * elixir_stdlib_data.c — hand-written Elixir stdlib seed (curated knowledge).
  *
- * Strategy mirrors perl_stdlib_data.c:
- *   1. Kernel auto-imports (is_atom, elem, hd, length, ...) registered as
- *      global, package-less functions reachable from any module without an
- *      explicit import — Elixir auto-imports Kernel into every module.
- *   2. (Phase 2a) curated core modules (Enum, Map, String, List, Keyword,
- *      Process, GenServer, Supervisor, Task, Agent) as module-qualified
- *      functions, so `Enum.map`, `GenServer.call`, etc. resolve.
+ * Registers Elixir core functions into the resolver's CBMTypeRegistry at
+ * name/arity granularity so the resolver can recognise a call as a stdlib call:
+ *   - Kernel auto-imports (is_atom/1, elem/2, length/1, …) — reachable BARE
+ *     from any module; resolved by the local rung's Kernel fallback
+ *     (lsp_ex_kernel).
+ *   - Curated core modules (Enum, Map, String, List, Keyword, Process,
+ *     GenServer, Supervisor, Task, Agent) — resolved by the qualified rung
+ *     (lsp_ex_stdlib).
  *
- * PR-1a ships the Kernel stub only — a baseline symbol table for the local
- * resolution rung (PR-1b). Return types are UNKNOWN: arity-correct resolution
- * is the goal (matching the Perl precedent), not type inference. The full
- * curated seed lands in Phase 2a (PR-2a).
+ * Entries are keyed to match the resolver's arity-suffixed lookup
+ * (cbm_registry_lookup_symbol(module, "fun/arity") composes "module.fun/arity"):
+ * qualified_name = "Enum.map/2", short_name = "map/2".
+ *
+ * Scope note — this seed is KNOWLEDGE, not graph nodes. A resolved stdlib call
+ * carries the lsp_ex_kernel/lsp_ex_stdlib strategy in result->resolved_calls,
+ * but a CALLS *edge* only forms when the callee QN matches an existing graph
+ * node (src/pipeline/lsp_resolve.h), and stdlib modules are not indexed. So
+ * stdlib resolution classifies the call (and is the foundation for the use-macro
+ * table in PR-2c); minting stdlib nodes for edges (à la kotlin_builtins.c) is a
+ * deliberately separate, opt-in choice (it inflates every project's node count).
+ * Return types are UNKNOWN — arity-correct classification is the goal, matching
+ * the Perl precedent.
  */
 
 #include "../type_rep.h"
@@ -21,70 +31,241 @@
 #include "../elixir_lsp.h"
 #include <string.h>
 
-#define MIXED cbm_type_unknown()
+/* One curated stdlib entry: module, function, arity. */
+typedef struct {
+    const char *module;
+    const char *fun;
+    int arity;
+} ElixirStdEntry;
 
-/* Register a global (auto-imported) Kernel function returning `ret_type_`.
- * Reachable from any module — short_name == qualified_name (bare name). */
-#define REG_KERNEL(name_, ret_type_)                                                            \
-    do {                                                                                        \
-        memset(&rf, 0, sizeof(rf));                                                             \
-        rf.min_params = -1;                                                                     \
-        rf.qualified_name = (name_);                                                            \
-        rf.short_name = (name_);                                                                \
-        {                                                                                       \
-            const CBMType **rets = (const CBMType **)cbm_arena_alloc(arena, 2 * sizeof(*rets)); \
-            rets[0] = (ret_type_);                                                              \
-            rets[1] = NULL;                                                                     \
-            rf.signature = cbm_type_func(arena, NULL, NULL, rets);                              \
-        }                                                                                       \
-        cbm_registry_add_func(reg, rf);                                                         \
-    } while (0)
+static const ElixirStdEntry kElixirStdlib[] = {
+    /* ── Kernel (auto-imported; called bare) ───────────────────────── */
+    {"Kernel", "is_atom", 1},
+    {"Kernel", "is_binary", 1},
+    {"Kernel", "is_bitstring", 1},
+    {"Kernel", "is_boolean", 1},
+    {"Kernel", "is_float", 1},
+    {"Kernel", "is_function", 1},
+    {"Kernel", "is_function", 2},
+    {"Kernel", "is_integer", 1},
+    {"Kernel", "is_list", 1},
+    {"Kernel", "is_map", 1},
+    {"Kernel", "is_map_key", 2},
+    {"Kernel", "is_nil", 1},
+    {"Kernel", "is_number", 1},
+    {"Kernel", "is_pid", 1},
+    {"Kernel", "is_port", 1},
+    {"Kernel", "is_reference", 1},
+    {"Kernel", "is_tuple", 1},
+    {"Kernel", "elem", 2},
+    {"Kernel", "put_elem", 3},
+    {"Kernel", "hd", 1},
+    {"Kernel", "tl", 1},
+    {"Kernel", "length", 1},
+    {"Kernel", "map_size", 1},
+    {"Kernel", "tuple_size", 1},
+    {"Kernel", "byte_size", 1},
+    {"Kernel", "bit_size", 1},
+    {"Kernel", "abs", 1},
+    {"Kernel", "ceil", 1},
+    {"Kernel", "floor", 1},
+    {"Kernel", "round", 1},
+    {"Kernel", "trunc", 1},
+    {"Kernel", "div", 2},
+    {"Kernel", "rem", 2},
+    {"Kernel", "max", 2},
+    {"Kernel", "min", 2},
+    {"Kernel", "to_string", 1},
+    {"Kernel", "to_charlist", 1},
+    {"Kernel", "inspect", 1},
+    {"Kernel", "inspect", 2},
+    {"Kernel", "send", 2},
+    {"Kernel", "self", 0},
+    {"Kernel", "spawn", 1},
+    {"Kernel", "spawn", 3},
+    {"Kernel", "spawn_link", 1},
+    {"Kernel", "make_ref", 0},
+    {"Kernel", "raise", 1},
+    {"Kernel", "raise", 2},
+    {"Kernel", "throw", 1},
+    {"Kernel", "exit", 1},
+    {"Kernel", "then", 2},
+    {"Kernel", "tap", 2},
+    {"Kernel", "get_in", 2},
+    {"Kernel", "put_in", 3},
+    {"Kernel", "update_in", 3},
+    {"Kernel", "struct", 2},
+    {"Kernel", "struct!", 2},
+    {"Kernel", "function_exported?", 3},
+
+    /* ── Enum ──────────────────────────────────────────────────────── */
+    {"Enum", "map", 2},
+    {"Enum", "each", 2},
+    {"Enum", "reduce", 2},
+    {"Enum", "reduce", 3},
+    {"Enum", "filter", 2},
+    {"Enum", "reject", 2},
+    {"Enum", "find", 2},
+    {"Enum", "find", 3},
+    {"Enum", "count", 1},
+    {"Enum", "count", 2},
+    {"Enum", "member?", 2},
+    {"Enum", "at", 2},
+    {"Enum", "sum", 1},
+    {"Enum", "all?", 1},
+    {"Enum", "all?", 2},
+    {"Enum", "any?", 1},
+    {"Enum", "any?", 2},
+    {"Enum", "into", 2},
+    {"Enum", "sort", 1},
+    {"Enum", "sort", 2},
+    {"Enum", "sort_by", 2},
+    {"Enum", "uniq", 1},
+    {"Enum", "uniq_by", 2},
+    {"Enum", "join", 1},
+    {"Enum", "join", 2},
+    {"Enum", "flat_map", 2},
+    {"Enum", "group_by", 2},
+    {"Enum", "take", 2},
+    {"Enum", "drop", 2},
+    {"Enum", "chunk_every", 2},
+    {"Enum", "with_index", 1},
+    {"Enum", "map_join", 3},
+    {"Enum", "frequencies", 1},
+    {"Enum", "zip", 2},
+    {"Enum", "empty?", 1},
+    {"Enum", "to_list", 1},
+    {"Enum", "min_by", 2},
+    {"Enum", "max_by", 2},
+
+    /* ── Map ───────────────────────────────────────────────────────── */
+    {"Map", "get", 2},
+    {"Map", "get", 3},
+    {"Map", "put", 3},
+    {"Map", "delete", 2},
+    {"Map", "keys", 1},
+    {"Map", "values", 1},
+    {"Map", "merge", 2},
+    {"Map", "has_key?", 2},
+    {"Map", "fetch", 2},
+    {"Map", "fetch!", 2},
+    {"Map", "update", 4},
+    {"Map", "put_new", 3},
+    {"Map", "take", 2},
+    {"Map", "drop", 2},
+    {"Map", "new", 0},
+    {"Map", "new", 1},
+    {"Map", "to_list", 1},
+    {"Map", "from_struct", 1},
+
+    /* ── String ────────────────────────────────────────────────────── */
+    {"String", "split", 1},
+    {"String", "split", 2},
+    {"String", "trim", 1},
+    {"String", "trim", 2},
+    {"String", "upcase", 1},
+    {"String", "downcase", 1},
+    {"String", "replace", 3},
+    {"String", "contains?", 2},
+    {"String", "length", 1},
+    {"String", "slice", 2},
+    {"String", "slice", 3},
+    {"String", "to_integer", 1},
+    {"String", "to_atom", 1},
+    {"String", "starts_with?", 2},
+    {"String", "ends_with?", 2},
+    {"String", "capitalize", 1},
+    {"String", "duplicate", 2},
+    {"String", "reverse", 1},
+    {"String", "trim_trailing", 1},
+
+    /* ── List ──────────────────────────────────────────────────────── */
+    {"List", "first", 1},
+    {"List", "last", 1},
+    {"List", "flatten", 1},
+    {"List", "delete", 2},
+    {"List", "insert_at", 3},
+    {"List", "keyfind", 3},
+    {"List", "wrap", 1},
+    {"List", "duplicate", 2},
+    {"List", "to_tuple", 1},
+    {"List", "foldl", 3},
+    {"List", "foldr", 3},
+
+    /* ── Keyword ───────────────────────────────────────────────────── */
+    {"Keyword", "get", 2},
+    {"Keyword", "get", 3},
+    {"Keyword", "put", 3},
+    {"Keyword", "has_key?", 2},
+    {"Keyword", "fetch", 2},
+    {"Keyword", "keys", 1},
+    {"Keyword", "values", 1},
+    {"Keyword", "merge", 2},
+    {"Keyword", "delete", 2},
+
+    /* ── Process ───────────────────────────────────────────────────── */
+    {"Process", "send", 3},
+    {"Process", "alive?", 1},
+    {"Process", "exit", 2},
+    {"Process", "register", 2},
+    {"Process", "whereis", 1},
+    {"Process", "monitor", 1},
+    {"Process", "sleep", 1},
+    {"Process", "put", 2},
+    {"Process", "get", 1},
+    {"Process", "link", 1},
+
+    /* ── GenServer ─────────────────────────────────────────────────── */
+    {"GenServer", "start_link", 2},
+    {"GenServer", "start_link", 3},
+    {"GenServer", "call", 2},
+    {"GenServer", "call", 3},
+    {"GenServer", "cast", 2},
+    {"GenServer", "reply", 2},
+    {"GenServer", "stop", 1},
+    {"GenServer", "stop", 3},
+
+    /* ── Supervisor ────────────────────────────────────────────────── */
+    {"Supervisor", "start_link", 2},
+    {"Supervisor", "start_link", 3},
+    {"Supervisor", "start_child", 2},
+    {"Supervisor", "which_children", 1},
+
+    /* ── Task ──────────────────────────────────────────────────────── */
+    {"Task", "start", 1},
+    {"Task", "start_link", 1},
+    {"Task", "async", 1},
+    {"Task", "async", 3},
+    {"Task", "await", 1},
+    {"Task", "await", 2},
+    {"Task", "await_many", 1},
+
+    /* ── Agent ─────────────────────────────────────────────────────── */
+    {"Agent", "start_link", 1},
+    {"Agent", "get", 2},
+    {"Agent", "get", 3},
+    {"Agent", "update", 2},
+    {"Agent", "cast", 2},
+    {"Agent", "stop", 1},
+};
 
 void cbm_elixir_stdlib_register(CBMTypeRegistry *reg, CBMArena *arena) {
-    CBMRegisteredFunc rf;
-
-    /* ── Kernel auto-imports (global, package-less) ─────────────────
-     * A representative subset of the Kernel functions/guards auto-imported
-     * into every module. Return types unknown for v1; the full list and the
-     * curated Enum/Map/String/... modules land in PR-2a. */
-
-    /* Type-check guards. */
-    REG_KERNEL("is_atom", cbm_type_builtin(arena, "bool"));
-    REG_KERNEL("is_binary", cbm_type_builtin(arena, "bool"));
-    REG_KERNEL("is_bitstring", cbm_type_builtin(arena, "bool"));
-    REG_KERNEL("is_boolean", cbm_type_builtin(arena, "bool"));
-    REG_KERNEL("is_float", cbm_type_builtin(arena, "bool"));
-    REG_KERNEL("is_function", cbm_type_builtin(arena, "bool"));
-    REG_KERNEL("is_integer", cbm_type_builtin(arena, "bool"));
-    REG_KERNEL("is_list", cbm_type_builtin(arena, "bool"));
-    REG_KERNEL("is_map", cbm_type_builtin(arena, "bool"));
-    REG_KERNEL("is_nil", cbm_type_builtin(arena, "bool"));
-    REG_KERNEL("is_number", cbm_type_builtin(arena, "bool"));
-    REG_KERNEL("is_pid", cbm_type_builtin(arena, "bool"));
-    REG_KERNEL("is_tuple", cbm_type_builtin(arena, "bool"));
-
-    /* Data access / inspection. */
-    REG_KERNEL("elem", MIXED);
-    REG_KERNEL("hd", MIXED);
-    REG_KERNEL("tl", MIXED);
-    REG_KERNEL("length", cbm_type_builtin(arena, "int"));
-    REG_KERNEL("map_size", cbm_type_builtin(arena, "int"));
-    REG_KERNEL("tuple_size", cbm_type_builtin(arena, "int"));
-    REG_KERNEL("abs", MIXED);
-    REG_KERNEL("max", MIXED);
-    REG_KERNEL("min", MIXED);
-    REG_KERNEL("round", cbm_type_builtin(arena, "int"));
-    REG_KERNEL("trunc", cbm_type_builtin(arena, "int"));
-
-    /* Conversion / formatting. */
-    REG_KERNEL("to_string", cbm_type_builtin(arena, "string"));
-    REG_KERNEL("inspect", cbm_type_builtin(arena, "string"));
-
-    /* Control / process primitives. */
-    REG_KERNEL("raise", MIXED);
-    REG_KERNEL("throw", MIXED);
-    REG_KERNEL("send", MIXED);
-    REG_KERNEL("spawn", MIXED);
-    REG_KERNEL("then", MIXED);
-    REG_KERNEL("tap", MIXED);
+    const CBMType **rets = (const CBMType **)cbm_arena_alloc(arena, 2 * sizeof(*rets));
+    if (rets) {
+        rets[0] = cbm_type_unknown();
+        rets[1] = NULL;
+    }
+    const int n = (int)(sizeof(kElixirStdlib) / sizeof(kElixirStdlib[0]));
+    for (int i = 0; i < n; i++) {
+        const ElixirStdEntry *e = &kElixirStdlib[i];
+        CBMRegisteredFunc rf;
+        memset(&rf, 0, sizeof(rf));
+        rf.min_params = -1;
+        /* QN "Mod.fun/arity", short "fun/arity" — matches the resolver's
+         * cbm_registry_lookup_symbol(module, "fun/arity") composition. */
+        rf.qualified_name = cbm_arena_sprintf(arena, "%s.%s/%d", e->module, e->fun, e->arity);
+        rf.short_name = cbm_arena_sprintf(arena, "%s/%d", e->fun, e->arity);
+        rf.signature = cbm_type_func(arena, NULL, NULL, rets);
+        cbm_registry_add_func(reg, rf);
+    }
 }

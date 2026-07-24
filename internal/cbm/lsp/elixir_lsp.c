@@ -36,11 +36,14 @@
  * cross-module resolution (mapping a dotted module name to another file's defs)
  * is Phase 2b.
  *
- * Resolution ladder (Phase 1b — rungs (a) qualified and (c) local):
- *   - local `fun(args)`      → file-local def by name           → lsp_ex_local
- *   - qualified `Mod.fun(a)` → Mod is a file-defined module or  → lsp_ex_qualified
- *     `__MODULE__`, then file-local def by name
- * Everything else — a qualified call to an external/cross-file module, a
+ * Resolution ladder:
+ *   - local `fun(args)`      → file-local def, else Kernel builtin
+ *                              → lsp_ex_local / lsp_ex_kernel
+ *   - qualified `Mod.fun(a)` → Mod is a file-defined module or `__MODULE__`
+ *                              → file-local def (lsp_ex_qualified);
+ *                              else a curated stdlib module (Enum/Map/GenServer…)
+ *                              → lsp_ex_stdlib
+ * Everything else — a qualified call to an unknown cross-file project module, a
  * variable-module dispatch, `apply/3`, `unquote` — emits NO edge (Phase 2b or
  * genuinely dynamic). Name/arity identity (Phase 1c) suffixes every def QN and
  * lookup with `/arity` (pipes add +1, captures `&f/N` carry the literal), via
@@ -63,6 +66,7 @@
  * pipeline floor in src/pipeline/lsp_resolve.h). */
 #define ELIXIR_CONF_LOCAL 0.90f     /* same-module / file-local def hit */
 #define ELIXIR_CONF_QUALIFIED 0.90f /* alias-gated same-file qualified hit */
+#define ELIXIR_CONF_STDLIB 0.85f    /* curated Kernel / core-module hit */
 
 /* Maximum AST-walk recursion depth. Mirrors CBM_LSP_PERL_MAX_WALK_DEPTH: the
  * per-child recursion can stack-overflow on pathologically nested sources; past
@@ -363,22 +367,32 @@ static int elixir_callsite_arity(ElixirLSPContext *ctx, TSNode node) {
     return arity;
 }
 
-/* Resolve a local `fun(args)` call against the file-local module. The registry
- * key is `fun/arity` — def QNs are arity-suffixed (D3), so the lookup must be
- * too. */
+/* Resolve a local `fun(args)` call: first against the file-local module, then
+ * the Kernel auto-import (is_atom/1, elem/2, length/1, …). The registry key is
+ * `fun/arity` — def QNs are arity-suffixed (D3), so the lookup must be too. */
 static void elixir_resolve_local(ElixirLSPContext *ctx, TSNode node, const char *fun) {
     if (!fun || !fun[0] || !ctx->module_qn)
         return;
     const char *key = cbm_arena_sprintf(ctx->arena, "%s/%d", fun, elixir_callsite_arity(ctx, node));
     const CBMRegisteredFunc *f = cbm_registry_lookup_symbol(ctx->registry, ctx->module_qn, key);
-    if (f && f->qualified_name)
+    if (f && f->qualified_name) {
         elixir_emit(ctx, f->qualified_name, "lsp_ex_local", ELIXIR_CONF_LOCAL);
+        return;
+    }
+    /* Kernel auto-import fallback — a bare call not defined in this module may
+     * be a Kernel builtin. (Classifies the call; forms a graph edge only if a
+     * Kernel node exists — see elixir_stdlib_data.c scope note.) */
+    const CBMRegisteredFunc *k = cbm_registry_lookup_symbol(ctx->registry, "Kernel", key);
+    if (k && k->qualified_name)
+        elixir_emit(ctx, k->qualified_name, "lsp_ex_kernel", ELIXIR_CONF_STDLIB);
 }
 
-/* Resolve a qualified `Mod.fun(args)` call. Mod is alias-expanded; resolution
- * proceeds only when Mod is a module defined in this file or __MODULE__ —
- * external/cross-file modules are Phase 2b (zero-edge). The registry key is
- * `fun/arity` (D3). */
+/* Resolve a qualified `Mod.fun(args)` call. Mod is alias-expanded; if it is a
+ * module defined in this file (or __MODULE__), resolve against the file-local
+ * defs (lsp_ex_qualified). Otherwise, if Mod.fun/arity is a curated stdlib
+ * entry (Enum, Map, GenServer, …), classify it lsp_ex_stdlib. A cross-file
+ * project module falls through to zero-edge here — that is Phase 2b. The
+ * registry key is `fun/arity` (D3). */
 static void elixir_resolve_qualified(ElixirLSPContext *ctx, TSNode node, const char *callee,
                                      int line) {
     const char *dot = strrchr(callee, '.');
@@ -394,18 +408,26 @@ static void elixir_resolve_qualified(ElixirLSPContext *ctx, TSNode node, const c
     if (mod[0] && (mod[0] < 'A' || mod[0] > 'Z') && strcmp(mod, "__MODULE__") != 0)
         return;
 
-    bool same_module = (strcmp(mod, "__MODULE__") == 0);
-    if (!same_module) {
-        const char *expanded = elixir_expand_alias(ctx, mod, line);
-        same_module = elixir_module_defined(ctx, expanded);
-    }
-    if (!same_module)
-        return; /* cross-file / external module — Phase 2b */
-
     const char *key = cbm_arena_sprintf(ctx->arena, "%s/%d", fun, elixir_callsite_arity(ctx, node));
-    const CBMRegisteredFunc *f = cbm_registry_lookup_symbol(ctx->registry, ctx->module_qn, key);
-    if (f && f->qualified_name)
-        elixir_emit(ctx, f->qualified_name, "lsp_ex_qualified", ELIXIR_CONF_QUALIFIED);
+
+    bool same_module = (strcmp(mod, "__MODULE__") == 0);
+    const char *expanded = same_module ? NULL : elixir_expand_alias(ctx, mod, line);
+    if (!same_module && expanded)
+        same_module = elixir_module_defined(ctx, expanded);
+
+    if (same_module) {
+        const CBMRegisteredFunc *f = cbm_registry_lookup_symbol(ctx->registry, ctx->module_qn, key);
+        if (f && f->qualified_name)
+            elixir_emit(ctx, f->qualified_name, "lsp_ex_qualified", ELIXIR_CONF_QUALIFIED);
+        return;
+    }
+
+    /* Curated stdlib module (Enum/Map/String/GenServer/…) — classify. */
+    const CBMRegisteredFunc *s =
+        cbm_registry_lookup_symbol(ctx->registry, expanded ? expanded : mod, key);
+    if (s && s->qualified_name)
+        elixir_emit(ctx, s->qualified_name, "lsp_ex_stdlib", ELIXIR_CONF_STDLIB);
+    /* else: cross-file project module → zero-edge (Phase 2b). */
 }
 
 /* Resolve every call in an expression subtree (a def head is excluded by the
