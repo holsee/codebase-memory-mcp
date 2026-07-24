@@ -257,14 +257,19 @@ TEST(repro_grammar_functional_fsharp) {
  * helper. Elixir `def` is extracted as a "call" node by tree-sitter-elixir;
  * extract_calls.c has a special Elixir branch for "call" nodes that extracts
  * the callee. Labels: "Function" (elixir_func_types includes "call").
- * Expected: dims 1-6 + 8 GREEN, dim 7 RED (enclosing-func gap).
+ * The CALLER is GUARDED (`def compute(x) when is_integer(x)`), whose head parses
+ * as binary_operator(left: call, "when", guard). Before PR-0b of the Elixir plan
+ * (docs/elixir-lsp/PLAN.md), compute_elixir_func_qn did not descend the guarded
+ * head, so `add(x, 1)` sourced to the module (dim 7 RED); PR-0b sources it to
+ * `compute` — this fixture is the before/after regression guard.
+ * Expected: ALL dims GREEN.
  */
 TEST(repro_grammar_functional_elixir) {
     static const char src[] =
         "defmodule Calc do\n"
         "  def add(a, b), do: a + b\n"
         "\n"
-        "  def compute(x) do\n"
+        "  def compute(x) when is_integer(x) do\n"
         "    add(x, 1)\n"
         "  end\n"
         "end\n";

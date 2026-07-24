@@ -35,7 +35,8 @@ bool cbm_is_test_file(const char *rel_path, CBMLanguage lang);
 
 // Find the innermost enclosing function node by walking parent chain.
 // Returns a null node if none found.
-TSNode cbm_find_enclosing_func(TSNode node, CBMLanguage lang);
+TSNode cbm_find_enclosing_func(TSNode node, CBMLanguage lang, const char *source);
+bool cbm_elixir_def_macro(const char *word);
 
 // Get the QN of an enclosing function, or module_qn if none.
 const char *cbm_enclosing_func_qn(CBMArena *a, TSNode node, CBMLanguage lang, const char *source,

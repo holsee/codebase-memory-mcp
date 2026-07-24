@@ -896,6 +896,112 @@ static void parse_r_imports(CBMExtractCtx *ctx) {
     r_collect_imports(ctx, ctx->root);
 }
 
+// --- Elixir imports (import / alias / require / use) ---
+// In Elixir these are `call` nodes whose target identifier is the directive
+// keyword, and idiomatically they live INSIDE a `defmodule do…end` block — not
+// at the top level. parse_generic_imports only scanned root children (so it
+// missed every nested directive) and, worse, mis-read the root `defmodule`
+// call itself as an "import". This dedicated walker descends the whole tree,
+// matches the four directives, and extracts the module argument, honouring
+// `as:` aliases and `Foo.{Bar, Baz}` multi-alias.
+static bool elixir_is_import_directive(const char *kw) {
+    return kw && (strcmp(kw, "import") == 0 || strcmp(kw, "alias") == 0 ||
+                  strcmp(kw, "require") == 0 || strcmp(kw, "use") == 0);
+}
+
+// Find an `as: Alias` value among a directive's trailing keyword args.
+static const char *elixir_find_as_alias(CBMExtractCtx *ctx, TSNode args) {
+    CBMArena *a = ctx->arena;
+    uint32_t ac = ts_node_child_count(args);
+    for (uint32_t i = 1; i < ac; i++) {
+        TSNode kw = ts_node_child(args, i);
+        if (ts_node_is_null(kw) || strcmp(ts_node_type(kw), "keywords") != 0) {
+            continue;
+        }
+        uint32_t pc = ts_node_child_count(kw);
+        for (uint32_t j = 0; j < pc; j++) {
+            TSNode pair = ts_node_child(kw, j);
+            if (ts_node_is_null(pair) || ts_node_child_count(pair) < 2) {
+                continue;
+            }
+            char *key = cbm_node_text(a, ts_node_child(pair, 0), ctx->source);
+            if (key && strncmp(key, "as", 2) == 0) {
+                return cbm_node_text(a, ts_node_child(pair, ts_node_child_count(pair) - 1),
+                                     ctx->source);
+            }
+        }
+    }
+    return NULL;
+}
+
+// Expand `Base.{A, B.C}` into Base.A, Base.B.C. Returns true if it was a
+// multi-alias form (and pushed each), false otherwise.
+static bool elixir_expand_multi_alias(CBMExtractCtx *ctx, char *mtext) {
+    CBMArena *a = ctx->arena;
+    char *brace = strchr(mtext, '{');
+    if (!brace) {
+        return false;
+    }
+    char *base = cbm_arena_strndup(a, mtext, (size_t)(brace - mtext));
+    // Trim a trailing '.' from the base ("Foo." -> "Foo").
+    size_t bl = strlen(base);
+    while (bl > 0 && (base[bl - 1] == '.' || base[bl - 1] == ' ')) {
+        base[--bl] = '\0';
+    }
+    char *inner = brace + 1;
+    char *close = strchr(inner, '}');
+    if (close) {
+        *close = '\0';
+    }
+    char *save = NULL;
+    for (char *tok = strtok_r(inner, ",", &save); tok; tok = strtok_r(NULL, ",", &save)) {
+        while (*tok == ' ') {
+            tok++;
+        }
+        size_t tl = strlen(tok);
+        while (tl > 0 && tok[tl - 1] == ' ') {
+            tok[--tl] = '\0';
+        }
+        if (!tok[0]) {
+            continue;
+        }
+        char *full = base[0] ? cbm_arena_sprintf(a, "%s.%s", base, tok) : tok;
+        CBMImport imp = {.local_name = path_last(a, full), .module_path = full};
+        cbm_imports_push(&ctx->result->imports, a, imp);
+    }
+    return true;
+}
+
+static void elixir_collect_imports(CBMExtractCtx *ctx, TSNode node) { // NOLINT(misc-no-recursion)
+    CBMArena *a = ctx->arena;
+    if (strcmp(ts_node_type(node), "call") == 0 && ts_node_child_count(node) > 0) {
+        char *kw = cbm_node_text(a, ts_node_child(node, 0), ctx->source);
+        if (elixir_is_import_directive(kw)) {
+            TSNode args = ts_node_child_by_field_name(node, TS_FIELD("arguments"));
+            if (ts_node_is_null(args) && ts_node_child_count(node) > 1) {
+                args = ts_node_child(node, 1);
+            }
+            if (!ts_node_is_null(args) && ts_node_child_count(args) > 0) {
+                char *mtext = cbm_node_text(a, ts_node_child(args, 0), ctx->source);
+                if (mtext && mtext[0] && !elixir_expand_multi_alias(ctx, mtext)) {
+                    const char *as_alias = elixir_find_as_alias(ctx, args);
+                    CBMImport imp = {.local_name = as_alias ? as_alias : path_last(a, mtext),
+                                     .module_path = mtext};
+                    cbm_imports_push(&ctx->result->imports, a, imp);
+                }
+            }
+        }
+    }
+    uint32_t n = ts_node_named_child_count(node);
+    for (uint32_t i = 0; i < n; i++) {
+        elixir_collect_imports(ctx, ts_node_named_child(node, i));
+    }
+}
+
+static void parse_elixir_imports(CBMExtractCtx *ctx) {
+    elixir_collect_imports(ctx, ctx->root);
+}
+
 // --- Generic import parsing for languages with simple import_declaration ---
 
 // Try known field names (path/source/module/name) to extract import path.
@@ -2790,8 +2896,9 @@ void cbm_extract_imports(CBMExtractCtx *ctx) {
         parse_r_imports(ctx);
         break;
     case CBM_LANG_ELIXIR:
-        // Elixir: import/use/alias/require are call nodes
-        parse_generic_imports(ctx, "call");
+        // Elixir: import/use/alias/require are call nodes, idiomatically nested
+        // inside a defmodule do-block — a dedicated recursive walker is required.
+        parse_elixir_imports(ctx);
         break;
     case CBM_LANG_BASH:
         // source/. commands

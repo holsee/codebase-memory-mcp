@@ -168,8 +168,7 @@ static const char *compute_elixir_func_qn(CBMExtractCtx *ctx, TSNode node) {
         return NULL;
     }
     char *macro = cbm_node_text(ctx->arena, ts_node_child(node, 0), ctx->source);
-    if (!macro || (strcmp(macro, "def") != 0 && strcmp(macro, "defp") != 0 &&
-                   strcmp(macro, "defmacro") != 0)) {
+    if (!macro || !cbm_elixir_def_macro(macro)) {
         return NULL;
     }
     TSNode args = ts_node_child_by_field_name(node, TS_FIELD("arguments"));
@@ -184,6 +183,14 @@ static const char *compute_elixir_func_qn(CBMExtractCtx *ctx, TSNode node) {
         return NULL;
     }
     const char *fk = ts_node_type(first_arg);
+    /* Guarded head: binary_operator(left: head, "when", guard). */
+    if (strcmp(fk, "binary_operator") == 0) {
+        TSNode left = ts_node_child_by_field_name(first_arg, TS_FIELD("left"));
+        if (!ts_node_is_null(left)) {
+            first_arg = left;
+            fk = ts_node_type(first_arg);
+        }
+    }
     char *name = NULL;
     if (strcmp(fk, "call") == 0 && ts_node_child_count(first_arg) > 0) {
         name = cbm_node_text(ctx->arena, ts_node_child(first_arg, 0), ctx->source);

@@ -758,7 +758,40 @@ static const char **func_kinds_for_lang(CBMLanguage lang) {
     }
 }
 
-TSNode cbm_find_enclosing_func(TSNode node, CBMLanguage lang) {
+bool cbm_elixir_def_macro(const char *word) {
+    static const char *defs[] = {"def",       "defp", "defmacro", "defmacrop",   "defguard",
+                                 "defguardp", "defn", "defnp",    "defdelegate", NULL};
+    for (const char **d = defs; *d; d++) {
+        if (strcmp(word, *d) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Elixir: every `call` node matches func_kinds_elixir, but only def-like
+// calls are definitions — verify the target keyword so an `if`/`case`/pipe
+// ancestor (also `call` nodes) is not mistaken for the enclosing function.
+static bool elixir_call_is_def(TSNode call_node, const char *source) {
+    if (!source || ts_node_child_count(call_node) == 0) {
+        return true; // no source to verify — keep legacy behaviour
+    }
+    TSNode target = ts_node_child(call_node, 0);
+    if (ts_node_is_null(target)) {
+        return false;
+    }
+    uint32_t s = ts_node_start_byte(target);
+    uint32_t e = ts_node_end_byte(target);
+    if (e <= s || e - s > 16) {
+        return false;
+    }
+    char word[17];
+    memcpy(word, source + s, e - s);
+    word[e - s] = '\0';
+    return cbm_elixir_def_macro(word);
+}
+
+TSNode cbm_find_enclosing_func(TSNode node, CBMLanguage lang, const char *source) {
     const char **kinds = func_kinds_for_lang(lang);
     TSNode cur = node;
     for (;;) {
@@ -769,6 +802,10 @@ TSNode cbm_find_enclosing_func(TSNode node, CBMLanguage lang) {
         const char *pk = ts_node_type(parent);
         for (const char **k = kinds; *k; k++) {
             if (strcmp(pk, *k) == 0) {
+                if (lang == CBM_LANG_ELIXIR && strcmp(pk, "call") == 0 &&
+                    !elixir_call_is_def(parent, source)) {
+                    break; // non-def call — keep walking up
+                }
                 return parent;
             }
         }
@@ -866,6 +903,38 @@ static const char *func_node_name(CBMArena *a, TSNode func_node, const char *sou
         }
     }
 
+    // Elixir: the def call carries its name in the first argument — either the
+    // head call `name(args)`, a bare identifier (zero-arity), or a guarded
+    // head binary_operator(left: head, "when", guard). Mirrors
+    // extract_elixir_func_def() in extract_defs.c.
+    if (lang == CBM_LANG_ELIXIR && strcmp(ts_node_type(func_node), "call") == 0) {
+        TSNode args = ts_node_child_by_field_name(func_node, TS_FIELD("arguments"));
+        if (ts_node_is_null(args) && ts_node_child_count(func_node) > 1) {
+            args = ts_node_child(func_node, 1);
+        }
+        if (ts_node_is_null(args) || ts_node_child_count(args) == 0) {
+            return NULL;
+        }
+        TSNode head = ts_node_child(args, 0);
+        if (ts_node_is_null(head)) {
+            return NULL;
+        }
+        if (strcmp(ts_node_type(head), "binary_operator") == 0) {
+            TSNode left = ts_node_child_by_field_name(head, TS_FIELD("left"));
+            if (!ts_node_is_null(left)) {
+                head = left;
+            }
+        }
+        const char *hk = ts_node_type(head);
+        if (strcmp(hk, "call") == 0 && ts_node_child_count(head) > 0) {
+            return cbm_node_text(a, ts_node_child(head, 0), source);
+        }
+        if (strcmp(hk, "identifier") == 0) {
+            return cbm_node_text(a, head, source);
+        }
+        return NULL;
+    }
+
     TSNode name_node = ts_node_child_by_field_name(func_node, TS_FIELD("name"));
     if (!ts_node_is_null(name_node)) {
         return cbm_node_text(a, name_node, source);
@@ -893,7 +962,7 @@ static const char *func_node_name(CBMArena *a, TSNode func_node, const char *sou
 const char *cbm_enclosing_func_qn(CBMArena *a, TSNode node, CBMLanguage lang, const char *source,
                                   const char *project, const char *rel_path,
                                   const char *module_qn) {
-    TSNode func_node = cbm_find_enclosing_func(node, lang);
+    TSNode func_node = cbm_find_enclosing_func(node, lang, source);
     if (ts_node_is_null(func_node)) {
         return module_qn;
     }
@@ -958,7 +1027,7 @@ const char *cbm_enclosing_func_qn_cached(CBMExtractCtx *ctx, TSNode node) {
                                            ctx->project, ctx->rel_path, ctx->module_qn);
 
     // Cache the result: find the enclosing function's byte range
-    TSNode func_node = cbm_find_enclosing_func(node, ctx->language);
+    TSNode func_node = cbm_find_enclosing_func(node, ctx->language, ctx->source);
     if (!ts_node_is_null(func_node) && ctx->ef_cache.count < EFC_SIZE) {
         EFCEntry *e = &ctx->ef_cache.entries[ctx->ef_cache.count++];
         e->start_byte = ts_node_start_byte(func_node);
