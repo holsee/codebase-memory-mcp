@@ -1,0 +1,5 @@
+question,variant,grade,attempts,tools,note
+Q-arity,baseline,FAIL,1,"index_status,query_graph x8,get_code_snippet,search_code","concluded arity NOT represented; group-by(file_path,name) had 0 rows; one node for get_session despite /1 and /2,/3 in source"
+Q-arity,candidate,PASS,1,"query_graph x2,get_graph_schema,search_graph x2","found send_file/5, read_body/1 vs /2 (distinct in-degrees), cross-module __catch__/5 vs /6; every QN carries /arity"
+E1,baseline,PARTIAL,1,"search_graph,trace_path x2,query_graph x2,get_code_snippet x18","arities reconstructed by reading 18 snippets (graph signature/arity empty); emitted false callee Adapter.conn/5 not in source"
+E1,candidate,PASS,1,"search_graph x2,trace_path x2","arity native in QN (put_resp_header/3); resolved via trace_path in 4 graph calls, no snippet cascade, no false edge"

@@ -517,6 +517,7 @@ other languages). `scripts/test.sh` full suite is the per-PR guard.
 | PR-1a skeleton + wiring + originality rows | `15985052` | ☑ 2026-07-24 |
 | PR-1b scopes/aliases/imports resolution | `d7da0ca7` | ☑ 2026-07-24 |
 | PR-1c name/arity identity (D3) + pipes/captures/defaults | `79ebbc7d` | ☑ 2026-07-24 |
+| Checkpoint C1.5 recorded (`testing/AFTER-PHASE-1.md`) | — | ☑ 2026-07-24 |
 | PR-2a stdlib seed | | ☐ |
 | PR-2b cross-file fallback tier | | ☐ |
 | PR-2c use-table + behaviours + protocols | | ☐ |
@@ -679,6 +680,24 @@ other languages). `scripts/test.sh` full suite is the per-PR guard.
   (`probe_elixir_module_calls`, 53-lang CALLS-breadth, lang_contract, grammar,
   lrp_elixir S4 pipe/S5 capture) all GREEN. Full suite 6640/0. **Phase 1
   complete** — next is the checkpoint C1.5 (`AFTER-PHASE-1.md`).
+- 2026-07-24 — Checkpoint C1.5 recorded (`testing/AFTER-PHASE-1.md`),
+  Phase-1 tip (`79ebbc7d`) vs Phase-0 tip (C1) to isolate the resolver.
+  **M4 (lsp_ex_* CALLS share) 0 → 34.9 % (plug) / 32.5 % (phoenix) / 18.3 %
+  (analytics)** — the first non-zero M4 for Elixir (≥70 % is the Phase-2
+  cross-file target; analytics is lower as a large app makes more cross-module
+  calls). M1: 100 % of functions now arity-identified; `foo/1` and `foo/2` are
+  distinct nodes. **The CALLS-total drop is a precision gain, not a regression:**
+  intra-file CALLS preserved (plug 583→573, phx 1349→1324, an 3425→3234) while
+  cross-file dropped ~32–37 % — arity correctly rejects fuzzy cross-module
+  by-name matches (e.g. `Enum.map`→a project `map`); accurate cross-module
+  resolution returns arity-precise in Phase 2b. Index cost flat (≤ +12 %).
+  Rubric (M6, focused): the arity-disambiguation question flips **FAIL → PASS**
+  (baseline: "arity not represented, one node for get_session"; candidate:
+  `read_body/1` vs `/2`, `send_file/5`, cross-module `__catch__/5` vs `/6`), and
+  the E1 arity-trace goes from an 18-`get_code_snippet` reconstruction + a false
+  edge to a 4-call `trace_path` with native arity. Non-Elixir control (graph-ui
+  TS, 45 files): Phase-0-tip and Phase-1 binaries produce **byte-identical**
+  graphs (338 nodes / 764 edges) — Phase 1 confirmed Elixir-scoped.
 - 2026-07-24 — Test-coverage audit + backfill. Found three added code paths
   with no test exercising them: PR-0d's multi-alias `Foo.{Bar, Baz}` expansion
   and `alias X, as: Y` handling (the grammar_imports fixture used only plain
