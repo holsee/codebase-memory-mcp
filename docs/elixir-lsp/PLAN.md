@@ -505,6 +505,10 @@ TS byte-identical control.
 
 From `REPORT.md` §5, group C/D — for consideration after promotion:
 
+- **Phoenix router Route nodes** (surfaced by the final rubric, E5): real
+  `get`/`post` router macros produce no Route nodes (the existing service
+  pattern covers test/tracker fixtures only) — the route→handler edge is
+  answerable via search_code but not pure graph traversal.
 - **`.heex`/`.eex` template extraction** — *the most likely next*: embedded
   Elixir islands (`<%= … %>`) parsed so template-made calls become visible.
 - Tier-2 shared cross-file registry (C9) — only at monorepo scale; M5 flat.
@@ -685,7 +689,7 @@ other languages). `scripts/test.sh` full suite is the per-PR guard.
 | PR-2.7d defstruct/defexception nodes (B8) | `4b3b690b` | ☑ 2026-07-24 |
 | Checkpoint C2.7 recorded (`testing/AFTER-PHASE-2.7.md`) | — | ☑ 2026-07-24 |
 | PR-3a QA hardening (Windows leg deferred → WINDOWS-VERIFICATION.md) | `007be938` | ☑ 2026-07-24 |
-| PR-3b docs + promotion + release matrix | | ☐ |
+| PR-3b docs + promotion + release matrix | — | ☑ 2026-07-24 |
 
 **Log**
 
