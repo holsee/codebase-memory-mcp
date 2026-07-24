@@ -608,7 +608,7 @@ other languages). `scripts/test.sh` full suite is the per-PR guard.
 | PR-2c use-table + behaviours + protocols | `c3071bd6` | ☑ 2026-07-24 |
 | Checkpoint C2 recorded (`testing/AFTER-PHASE-2.md`) | — | ☑ 2026-07-24 |
 | PR-2.5a local captures (`lsp_ex_capture`, ladder rung d) | `69c058a8` | ☑ 2026-07-24 |
-| PR-2.5b import-selector resolution (`lsp_ex_import`, ladder rung c) | | ☐ |
+| PR-2.5b import-selector resolution (`lsp_ex_import`, ladder rung c) | `058925ba` | ☑ 2026-07-24 |
 | PR-2.5c external-call textual-fallback suppression | | ☐ |
 | PR-2.5d IMPORTS-edge resolution to Class nodes (C1 register item) | | ☐ |
 | Checkpoint C2.5 recorded (`testing/AFTER-PHASE-2.5.md`) | — | ☐ |
@@ -883,6 +883,15 @@ other languages). `scripts/test.sh` full suite is the per-PR guard.
   remaining textual edge is 2.5b's imported bare call). 3 new tests (capture in
   Enum.map, arity selection f/2-not-f/1, unknown-fn zero-edge). Full suite
   6651/0.
+- 2026-07-24 — PR-2.5b landed (`058925ba`). Import-selector resolution: PASS 1
+  parses each `import` into a typed directive (module alias-expanded,
+  `only:`/`except:` selectors → (name, arity) pairs); the local rung consults
+  imports after file-local defs and **before Kernel** (Elixir semantics —
+  explicit import shadows the auto-import). Admitted calls resolve via the
+  cross map (`lsp_ex_import`), the file-defined set (`lsp_ex_import`), or the
+  curated stdlib (`lsp_ex_stdlib`); non-admitted arities never resolve.
+  **Showcase oracle: 6/6 resolver-verified (100 %)** — the `|> double()`
+  imported bare call was the last textual edge. 4 new tests. Full suite 6655/0.
   with no test exercising them: PR-0d's multi-alias `Foo.{Bar, Baz}` expansion
   and `alias X, as: Y` handling (the grammar_imports fixture used only plain
   directives), and PR-0c's *nested* `defimpl` prefix. Added
