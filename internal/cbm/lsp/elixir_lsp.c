@@ -58,15 +58,21 @@
 #include "lsp_node_iter.h"
 #include "../helpers.h"
 #include "../arena.h"
+#include "../../../src/foundation/hash_table.h" /* CBMHashTable (cross module map) */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+/* tree-sitter-elixir language (vendored) — for the cross pass to re-parse a
+ * file when the pipeline did not hand over a cached tree. */
+extern const TSLanguage *tree_sitter_elixir(void);
 
 /* Resolution confidence levels (mirror perl_lsp's tiers; both above the 0.6
  * pipeline floor in src/pipeline/lsp_resolve.h). */
 #define ELIXIR_CONF_LOCAL 0.90f     /* same-module / file-local def hit */
 #define ELIXIR_CONF_QUALIFIED 0.90f /* alias-gated same-file qualified hit */
 #define ELIXIR_CONF_STDLIB 0.85f    /* curated Kernel / core-module hit */
+#define ELIXIR_CONF_CROSS 0.85f     /* cross-file project-module hit (Phase 2b) */
 
 /* Maximum AST-walk recursion depth. Mirrors CBM_LSP_PERL_MAX_WALK_DEPTH: the
  * per-child recursion can stack-overflow on pathologically nested sources; past
@@ -422,6 +428,20 @@ static void elixir_resolve_qualified(ElixirLSPContext *ctx, TSNode node, const c
         return;
     }
 
+    /* Phase 2b: cross-file project module. The map (Elixir module name ->
+     * def_module_qn path prefix) is populated only by cbm_run_elixir_lsp_cross,
+     * so this block is inert in the per-file pass (Phase 1 preserved). */
+    if (ctx->cross_module_map && expanded) {
+        const char *dmq = (const char *)cbm_ht_get((CBMHashTable *)ctx->cross_module_map, expanded);
+        if (dmq) {
+            const CBMRegisteredFunc *f = cbm_registry_lookup_symbol(ctx->registry, dmq, key);
+            if (f && f->qualified_name) {
+                elixir_emit(ctx, f->qualified_name, "lsp_ex_cross", ELIXIR_CONF_CROSS);
+                return;
+            }
+        }
+    }
+
     /* Curated stdlib module (Enum/Map/String/GenServer/…) — classify. */
     const CBMRegisteredFunc *s =
         cbm_registry_lookup_symbol(ctx->registry, expanded ? expanded : mod, key);
@@ -634,4 +654,99 @@ void cbm_run_elixir_lsp(CBMArena *arena, CBMFileResult *result, const char *sour
     }
 
     cbm_arena_destroy(&idx_arena);
+}
+
+/* ── entry: cbm_run_elixir_lsp_cross (Phase 2b) ─────────────────── */
+
+/* Cross-file resolver. Mirrors cbm_run_kotlin_lsp_cross: register the
+ * project-wide defs[] (filtered to this file's language, filter-exempt so the
+ * WHOLE project is present — Elixir module names are globally unique) into a
+ * scratch registry, recover the module-identity map from Class defs, then run
+ * the shared two-pass walk with the cross map enabled so a `Mod.fun/arity`
+ * call to another file resolves to that module's def node.
+ *
+ * import_names/import_qns are accepted for signature parity but intentionally
+ * NOT fed into the alias map: PASS 1 re-derives aliases from source, and the
+ * Elixir IMPORTS-edge QNs are fuzzy (a separate concern — see
+ * elixir_stdlib_data.c / the resolver header), so feeding them would inject
+ * wrong targets. */
+void cbm_run_elixir_lsp_cross(CBMArena *arena, const char *source, int source_len,
+                              const char *module_qn, CBMLSPDef *defs, int def_count,
+                              const char **import_names, const char **import_qns, int import_count,
+                              TSTree *cached_tree, CBMResolvedCallArray *out) {
+    (void)import_names;
+    (void)import_qns;
+    (void)import_count;
+    if (!arena || !source || !out)
+        return;
+
+    CBMTypeRegistry reg;
+    cbm_registry_init(&reg, arena);
+    cbm_elixir_stdlib_register(&reg, arena);
+
+    /* Module-identity map: Elixir module name -> def_module_qn (path prefix),
+     * recovered from Class defs. Function/Method defs are registered under
+     * their real graph QN so lookup_symbol(def_module_qn, "fun/arity") composes
+     * back to that QN. */
+    CBMHashTable *modmap = cbm_ht_create((uint32_t)(def_count > 0 ? def_count : 1));
+    for (int i = 0; i < def_count; i++) {
+        const CBMLSPDef *d = &defs[i];
+        if (!d->qualified_name || !d->short_name || !d->label)
+            continue;
+        if (strcmp(d->label, "Class") == 0) {
+            if (modmap && d->def_module_qn && d->def_module_qn[0] &&
+                !cbm_ht_has(modmap, d->short_name))
+                cbm_ht_set(modmap, d->short_name, (void *)d->def_module_qn); /* borrowed */
+        } else if (strcmp(d->label, "Function") == 0 || strcmp(d->label, "Method") == 0) {
+            CBMRegisteredFunc rf;
+            memset(&rf, 0, sizeof(rf));
+            rf.qualified_name = d->qualified_name;
+            rf.short_name = d->short_name;
+            if (strcmp(d->label, "Method") == 0 && d->receiver_type)
+                rf.receiver_type = d->receiver_type;
+            const CBMType **rets =
+                (const CBMType **)cbm_arena_alloc(arena, 2 * sizeof(const CBMType *));
+            if (rets) {
+                rets[0] = cbm_type_unknown();
+                rets[1] = NULL;
+            }
+            rf.signature = cbm_type_func(arena, NULL, NULL, rets);
+            cbm_registry_add_func(&reg, rf);
+        }
+    }
+
+    CBMArena idx_arena;
+    cbm_arena_init(&idx_arena);
+    cbm_registry_finalize_into(&reg, &idx_arena);
+
+    TSTree *tree = cached_tree;
+    bool owns_tree = false;
+    if (!tree) {
+        TSParser *parser = ts_parser_new();
+        if (!parser) {
+            cbm_ht_free(modmap);
+            cbm_arena_destroy(&idx_arena);
+            return;
+        }
+        ts_parser_set_language(parser, tree_sitter_elixir());
+        tree = ts_parser_parse_string(parser, NULL, source, (uint32_t)source_len);
+        ts_parser_delete(parser);
+        owns_tree = true;
+    }
+    if (!tree) {
+        cbm_ht_free(modmap);
+        cbm_arena_destroy(&idx_arena);
+        return;
+    }
+
+    ElixirLSPContext ctx;
+    elixir_lsp_init(&ctx, arena, source, source_len, &reg, module_qn ? module_qn : "", out);
+    ctx.cross_module_map = modmap; /* enables the cross-resolution branch */
+
+    elixir_lsp_process_file(&ctx, ts_tree_root_node(tree));
+
+    cbm_ht_free(modmap);
+    cbm_arena_destroy(&idx_arena);
+    if (owns_tree)
+        ts_tree_delete(tree);
 }

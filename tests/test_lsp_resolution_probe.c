@@ -1700,13 +1700,14 @@ TEST(lrp_elixir_s2_qualified_alias) {
     PASS();
 }
 
-/* S3 — Elixir cross-file call (RED: needs elixir_lsp_cross, Phase 2b). */
+/* S3 — Elixir cross-file call (GREEN as of Phase 2b: elixir_lsp_cross resolves
+ * Mathx.double/1 to the def in mathx.ex; the direct proof is
+ * test_elixir_lsp.c::elixirlsp_cross_file_basic — the probe only floors CALLS). */
 TEST(lrp_elixir_s3_crossfile_call) {
     static const LRP_File f[] = {
         {"mathx.ex", "defmodule Mathx do\n  def double(x), do: x * 2\nend\n"},
         {"mainx.ex", "defmodule Mainx do\n  def run(x), do: Mathx.double(x)\nend\n"}};
-    /* Floor met by the textual name resolver; lsp-precise cross-file is Phase 2b. */
-    ASSERT_TRUE(lrp_assert_calls(f, 2, 1, "elixir/S3/crossfile_call", 0));
+    ASSERT_TRUE(lrp_assert_calls(f, 2, 1, "elixir/S3/crossfile_call", 1));
     PASS();
 }
 

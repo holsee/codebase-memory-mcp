@@ -17,6 +17,7 @@
  */
 #include "test_framework.h"
 #include "cbm.h"
+#include "arena.h"
 #include "lsp/elixir_lsp.h"
 #include <string.h>
 
@@ -313,6 +314,101 @@ TEST(elixirlsp_stdlib_arity) {
     PASS();
 }
 
+/* ── Cross-file resolution (PR-2b) ─────────────────────────────── */
+
+/* Set up the 4 synthetic project-wide defs for a two-module project:
+ *   Mathx  (mathx.ex → module test.mathx):  double/1
+ *   Mainx  (mainx.ex → module test.mainx):  run/1  (the caller)
+ * The cross resolver is filter-exempt, so both modules' defs are present. */
+static void cross_defs(CBMLSPDef defs[4]) {
+    memset(defs, 0, 4 * sizeof(CBMLSPDef));
+    defs[0].qualified_name = "test.mathx.Mathx";
+    defs[0].short_name = "Mathx";
+    defs[0].label = "Class";
+    defs[0].def_module_qn = "test.mathx";
+    defs[1].qualified_name = "test.mathx.double/1";
+    defs[1].short_name = "double";
+    defs[1].label = "Function";
+    defs[1].def_module_qn = "test.mathx";
+    defs[2].qualified_name = "test.mainx.Mainx";
+    defs[2].short_name = "Mainx";
+    defs[2].label = "Class";
+    defs[2].def_module_qn = "test.mainx";
+    defs[3].qualified_name = "test.mainx.run/1";
+    defs[3].short_name = "run";
+    defs[3].label = "Function";
+    defs[3].def_module_qn = "test.mainx";
+}
+
+static const CBMResolvedCall *cross_find(const CBMResolvedCallArray *out, const char *calleeFrag,
+                                         const char *strategy) {
+    for (int i = 0; i < out->count; i++) {
+        const CBMResolvedCall *rc = &out->items[i];
+        if (rc->callee_qn && strstr(rc->callee_qn, calleeFrag) &&
+            (!strategy || (rc->strategy && strcmp(rc->strategy, strategy) == 0)))
+            return rc;
+    }
+    return NULL;
+}
+
+/* A fully-qualified call to another file's module resolves cross-file. */
+TEST(elixirlsp_cross_file_basic) {
+    const char *src = "defmodule Mainx do\n"
+                      "  def run(x), do: Mathx.double(x)\n"
+                      "end\n";
+    CBMArena arena;
+    cbm_arena_init(&arena);
+    CBMResolvedCallArray out;
+    memset(&out, 0, sizeof(out));
+    CBMLSPDef defs[4];
+    cross_defs(defs);
+    cbm_run_elixir_lsp_cross(&arena, src, (int)strlen(src), "test.mainx", defs, 4, NULL, NULL, 0,
+                             NULL, &out);
+    const CBMResolvedCall *hit = cross_find(&out, "test.mathx.double/1", "lsp_ex_cross");
+    ASSERT(hit != NULL);
+    ASSERT(hit->caller_qn && strcmp(hit->caller_qn, "test.mainx.run/1") == 0);
+    ASSERT(hit->confidence >= 0.6f);
+    cbm_arena_destroy(&arena);
+    PASS();
+}
+
+/* Cross-file resolution through an alias (`alias Mathx, as: M`). */
+TEST(elixirlsp_cross_file_alias) {
+    const char *src = "defmodule Mainx do\n"
+                      "  alias Mathx, as: M\n"
+                      "  def run(x), do: M.double(x)\n"
+                      "end\n";
+    CBMArena arena;
+    cbm_arena_init(&arena);
+    CBMResolvedCallArray out;
+    memset(&out, 0, sizeof(out));
+    CBMLSPDef defs[4];
+    cross_defs(defs);
+    cbm_run_elixir_lsp_cross(&arena, src, (int)strlen(src), "test.mainx", defs, 4, NULL, NULL, 0,
+                             NULL, &out);
+    ASSERT(cross_find(&out, "test.mathx.double/1", "lsp_ex_cross") != NULL);
+    cbm_arena_destroy(&arena);
+    PASS();
+}
+
+/* A call to a module absent from the project defs emits no edge. */
+TEST(elixirlsp_cross_file_unknown_module) {
+    const char *src = "defmodule Mainx do\n"
+                      "  def run(x), do: Nowhere.gone(x)\n"
+                      "end\n";
+    CBMArena arena;
+    cbm_arena_init(&arena);
+    CBMResolvedCallArray out;
+    memset(&out, 0, sizeof(out));
+    CBMLSPDef defs[4];
+    cross_defs(defs);
+    cbm_run_elixir_lsp_cross(&arena, src, (int)strlen(src), "test.mainx", defs, 4, NULL, NULL, 0,
+                             NULL, &out);
+    ASSERT(cross_find(&out, "gone", NULL) == NULL);
+    cbm_arena_destroy(&arena);
+    PASS();
+}
+
 /* A resolver run over an empty module emits nothing and does not crash. */
 TEST(elixirlsp_empty_module) {
     const char *src = "defmodule Empty do\nend\n";
@@ -341,5 +437,8 @@ SUITE(elixir_lsp) {
     RUN_TEST(elixirlsp_kernel_builtin);
     RUN_TEST(elixirlsp_stdlib_qualified);
     RUN_TEST(elixirlsp_stdlib_arity);
+    RUN_TEST(elixirlsp_cross_file_basic);
+    RUN_TEST(elixirlsp_cross_file_alias);
+    RUN_TEST(elixirlsp_cross_file_unknown_module);
     RUN_TEST(elixirlsp_empty_module);
 }
