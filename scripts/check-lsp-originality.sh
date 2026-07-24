@@ -27,7 +27,7 @@
 # USAGE
 #   bash scripts/check-lsp-originality.sh [--lang NAME] [--refresh]
 #                                         [--list-candidates] [--help]
-#     --lang NAME        scan against ONE reference only (py|ts|go|cs|c|java|kotlin|rust|php|perl)
+#     --lang NAME        scan against ONE reference only (py|ts|go|cs|c|java|kotlin|rust|php|perl|elixir)
 #     --refresh          re-fetch reference sources even if cached
 #     --list-candidates  print the extracted local tokens and exit (no fetch; self-test)
 #   Exit 0 = no verbatim overlap found.  Exit 1 = overlap(s) to review by a human.
@@ -64,6 +64,12 @@ REFS=(
   # Perl (PR #461) was authored clean-room. We scan against PerlNavigator (MIT)
   # — the leading OSS Perl language server — for defensive copy-detection.
   "perl|https://github.com/bscan/PerlNavigator|server/src"
+  # Elixir (Phase 1) was authored clean-room from the design study in
+  # docs/elixir-lsp/PLAN.md §1.4. We scan against Expert (Apache-2.0) — the
+  # official next-gen Elixir language server, whose pure-static `forge`/`engine`
+  # apps were the algorithmic reference — for defensive copy-detection. Expert
+  # is Elixir/Rust; our resolver is C, so this is a phrase/comment-copy guard.
+  "elixir|https://github.com/expert-lsp/expert|apps/forge,apps/engine"
 )
 
 ONLY_LANG=""; REFRESH=0; LIST_ONLY=0

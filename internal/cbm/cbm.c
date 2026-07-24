@@ -13,6 +13,7 @@
 #include "lsp/java_lsp.h"
 #include "lsp/kotlin_lsp.h"
 #include "lsp/rust_lsp.h"
+#include "lsp/elixir_lsp.h"
 #include "preprocessor.h"
 #include "foundation/compat.h"
 #include "foundation/compat_fs.h"  // cbm_fopen — crash-supervisor per-file marker write
@@ -1236,6 +1237,9 @@ CBMFileResult *cbm_extract_file_ex(const char *source, int source_len, CBMLangua
         }
         if (language == CBM_LANG_PERL) {
             cbm_run_perl_lsp(a, result, source, source_len, root);
+        }
+        if (language == CBM_LANG_ELIXIR) {
+            cbm_run_elixir_lsp(a, result, source, source_len, root);
         }
         if (language == CBM_LANG_PYTHON) {
             cbm_run_py_lsp(a, result, source, source_len, root);
