@@ -1805,6 +1805,30 @@ TEST(lrp_elixir_s9_stdlib_collision) {
     PASS();
 }
 
+/* S12 — Elixir dep-call collision suppression (Phase 2.6b). A call to an
+ * uncurated hex dep (`HTTPoison.get/1`) must NOT fabricate a CALLS edge to a
+ * same-named project `get/1` — the cross pass classifies unknown Capitalised
+ * modules lsp_ex_external and the pipeline suppresses the textual fallback. */
+TEST(lrp_elixir_s12_dep_collision) {
+    static const LRP_File f[] = {
+        {"webx.ex", "defmodule Webx do\n"
+                    "  def get(a), do: a\n"
+                    "end\n"},
+        {"clientx.ex", "defmodule Clientx do\n"
+                       "  def fetch(u), do: HTTPoison.get(u)\n"
+                       "end\n"}};
+    LRP_Proj lp;
+    cbm_store_t *store = lrp_index(&lp, f, 2);
+    int calls = store ? cbm_store_count_edges_by_type(store, lp.project, "CALLS") : -1;
+    if (calls != 0) {
+        fprintf(stderr, "  [LRP] elixir/S12/dep_collision FAIL calls=%d expected 0\n", calls);
+        lrp_diag(store, lp.project, "elixir/S12/dep_collision");
+    }
+    lrp_cleanup(&lp, store);
+    ASSERT_TRUE(calls == 0);
+    PASS();
+}
+
 /* S11 — Elixir Erlang atom-module collision suppression (Phase 2.6a). A call
  * to `:ets.insert/2` must NOT fabricate a CALLS edge to a same-named project
  * `insert/2` — the resolver classifies atom-module calls lsp_ex_erlang and the
@@ -1977,6 +2001,7 @@ SUITE(lsp_resolution_probe) {
     RUN_TEST(lrp_elixir_s9_stdlib_collision);
     RUN_TEST(lrp_elixir_s10_imports_resolution);
     RUN_TEST(lrp_elixir_s11_erlang_collision);
+    RUN_TEST(lrp_elixir_s12_dep_collision);
 
     /* ── USAGE-edge bonus probes ── */
     RUN_TEST(lrp_go_usage_struct_literal);

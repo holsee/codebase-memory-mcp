@@ -614,9 +614,11 @@ static void elixir_resolve_qualified(ElixirLSPContext *ctx, TSNode node, const c
     /* Phase 2b: cross-file project module. The map (Elixir module name ->
      * def_module_qn path prefix) is populated only by cbm_run_elixir_lsp_cross,
      * so this block is inert in the per-file pass (Phase 1 preserved). */
+    bool project_module_known = false;
     if (ctx->cross_module_map && expanded) {
         const char *dmq = (const char *)cbm_ht_get((CBMHashTable *)ctx->cross_module_map, expanded);
         if (dmq) {
+            project_module_known = true;
             const CBMRegisteredFunc *f = cbm_registry_lookup_symbol(ctx->registry, dmq, key);
             if (f && f->qualified_name) {
                 elixir_emit(ctx, f->qualified_name, "lsp_ex_cross", ELIXIR_CONF_CROSS);
@@ -628,9 +630,26 @@ static void elixir_resolve_qualified(ElixirLSPContext *ctx, TSNode node, const c
     /* Curated stdlib module (Enum/Map/String/GenServer/…) — classify. */
     const CBMRegisteredFunc *s =
         cbm_registry_lookup_symbol(ctx->registry, expanded ? expanded : mod, key);
-    if (s && s->qualified_name)
+    if (s && s->qualified_name) {
         elixir_emit(ctx, s->qualified_name, "lsp_ex_stdlib", ELIXIR_CONF_STDLIB);
-    /* else: cross-file project module → zero-edge (Phase 2b). */
+        return;
+    }
+
+    /* Phase 2.6b: external dependency. In the CROSS pass the module map is
+     * complete, so a Capitalised module that is neither a project module nor
+     * curated stdlib is a dep (HTTPoison, Jason, …) — classify it so the
+     * pipeline suppresses the textual fallback (a dep call must not
+     * short-name-match a project function). Never applied per-file (map NULL
+     * ⇒ knowledge incomplete) and never when the module IS in the project but
+     * the arity missed (macro-generated defs — leave today's behaviour).
+     * Known trade-off: modules DEFINED BY MACROS are invisible to the map and
+     * lose occasionally-correct fuzzy edges; corpus edge diff reviewed before
+     * landing (PLAN.md Phase 2.6). */
+    if (ctx->cross_module_map && !project_module_known) {
+        const char *xkey =
+            cbm_arena_sprintf(ctx->arena, "%s/%d", callee, elixir_callsite_arity(ctx, node));
+        elixir_emit(ctx, xkey, "lsp_ex_external", ELIXIR_CONF_STDLIB);
+    }
 }
 
 /* Resolve every call in an expression subtree (a def head is excluded by the

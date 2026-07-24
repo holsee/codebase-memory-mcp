@@ -391,7 +391,10 @@ TEST(elixirlsp_cross_file_alias) {
     PASS();
 }
 
-/* A call to a module absent from the project defs emits no edge. */
+/* A call to a module absent from the project defs never resolves to a project
+ * def — since Phase 2.6b it CLASSIFIES lsp_ex_external instead (feeding the
+ * pipeline suppression; still no graph edge, as external targets have no
+ * node). */
 TEST(elixirlsp_cross_file_unknown_module) {
     const char *src = "defmodule Mainx do\n"
                       "  def run(x), do: Nowhere.gone(x)\n"
@@ -404,7 +407,8 @@ TEST(elixirlsp_cross_file_unknown_module) {
     cross_defs(defs);
     cbm_run_elixir_lsp_cross(&arena, src, (int)strlen(src), "test.mainx", defs, 4, NULL, NULL, 0,
                              NULL, &out);
-    ASSERT(cross_find(&out, "gone", NULL) == NULL);
+    ASSERT(cross_find(&out, "Nowhere.gone/1", "lsp_ex_external") != NULL);
+    ASSERT(cross_find(&out, "gone", "lsp_ex_cross") == NULL);
     cbm_arena_destroy(&arena);
     PASS();
 }
@@ -572,7 +576,44 @@ TEST(elixirlsp_capture_unknown_zero_edge) {
     PASS();
 }
 
-/* ── Precision pass (PR-2.6a) ──────────────────────────────────── */
+/* ── Precision pass (PR-2.6a/2.6b) ─────────────────────────────── */
+
+/* In the cross pass (complete module map), a qualified call to a module that
+ * is neither in the project nor curated stdlib classifies lsp_ex_external and
+ * never binds to a same-named project function. */
+TEST(elixirlsp_dep_call_external_cross) {
+    const char *src = "defmodule Mainx do\n"
+                      "  def run(u), do: HTTPoison.get(u)\n"
+                      "end\n";
+    CBMArena arena;
+    cbm_arena_init(&arena);
+    CBMResolvedCallArray out;
+    memset(&out, 0, sizeof(out));
+    CBMLSPDef defs[4];
+    memset(defs, 0, sizeof(defs));
+    defs[0].qualified_name = "test.webx.Webx";
+    defs[0].short_name = "Webx";
+    defs[0].label = "Class";
+    defs[0].def_module_qn = "test.webx";
+    defs[1].qualified_name = "test.webx.get/1"; /* same-named project fn */
+    defs[1].short_name = "get";
+    defs[1].label = "Function";
+    defs[1].def_module_qn = "test.webx";
+    defs[2].qualified_name = "test.mainx.Mainx";
+    defs[2].short_name = "Mainx";
+    defs[2].label = "Class";
+    defs[2].def_module_qn = "test.mainx";
+    defs[3].qualified_name = "test.mainx.run/1";
+    defs[3].short_name = "run";
+    defs[3].label = "Function";
+    defs[3].def_module_qn = "test.mainx";
+    cbm_run_elixir_lsp_cross(&arena, src, (int)strlen(src), "test.mainx", defs, 4, NULL, NULL, 0,
+                             NULL, &out);
+    ASSERT(cross_find(&out, "HTTPoison.get/1", "lsp_ex_external") != NULL);
+    ASSERT(cross_find(&out, "test.webx.get", NULL) == NULL);
+    cbm_arena_destroy(&arena);
+    PASS();
+}
 
 /* An Erlang atom-module call is classified lsp_ex_erlang (feeding the
  * pipeline's external-call suppression) and never binds to a same-named
@@ -641,6 +682,7 @@ SUITE(elixir_lsp) {
     RUN_TEST(elixirlsp_capture_arity_selection);
     RUN_TEST(elixirlsp_capture_unknown_zero_edge);
     RUN_TEST(elixirlsp_erlang_atom_module);
+    RUN_TEST(elixirlsp_dep_call_external_cross);
     RUN_TEST(elixirlsp_import_only_atom_form);
     RUN_TEST(elixirlsp_import_only_stdlib);
     RUN_TEST(elixirlsp_import_only_arity_mismatch);
