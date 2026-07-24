@@ -1805,6 +1805,27 @@ TEST(lrp_elixir_s9_stdlib_collision) {
     PASS();
 }
 
+/* S13 — Elixir defdelegate edge (Phase 2.7a). `defdelegate double(x), to:
+ * Mathx` produces a real delegator -> target CALLS edge (the extractor
+ * rewrites the delegate call site; the cross resolver supplies the
+ * lsp_ex_delegate strategy). Before 2.7a the record was an unresolvable
+ * `defdelegate/2` noise call -> 0 CALLS. */
+TEST(lrp_elixir_s13_delegate_edge) {
+    static const LRP_File f[] = {
+        {"mathx.ex", "defmodule Mathx do\n  def double(x), do: x * 2\nend\n"},
+        {"mainx.ex", "defmodule Mainx do\n  defdelegate double(x), to: Mathx\nend\n"}};
+    LRP_Proj lp;
+    cbm_store_t *store = lrp_index(&lp, f, 2);
+    int calls = store ? cbm_store_count_edges_by_type(store, lp.project, "CALLS") : -1;
+    if (calls != 1) {
+        fprintf(stderr, "  [LRP] elixir/S13/delegate_edge FAIL calls=%d expected 1\n", calls);
+        lrp_diag(store, lp.project, "elixir/S13/delegate_edge");
+    }
+    lrp_cleanup(&lp, store);
+    ASSERT_TRUE(calls == 1);
+    PASS();
+}
+
 /* S12 — Elixir dep-call collision suppression (Phase 2.6b). A call to an
  * uncurated hex dep (`HTTPoison.get/1`) must NOT fabricate a CALLS edge to a
  * same-named project `get/1` — the cross pass classifies unknown Capitalised
@@ -2002,6 +2023,7 @@ SUITE(lsp_resolution_probe) {
     RUN_TEST(lrp_elixir_s10_imports_resolution);
     RUN_TEST(lrp_elixir_s11_erlang_collision);
     RUN_TEST(lrp_elixir_s12_dep_collision);
+    RUN_TEST(lrp_elixir_s13_delegate_edge);
 
     /* ── USAGE-edge bonus probes ── */
     RUN_TEST(lrp_go_usage_struct_literal);

@@ -645,6 +645,74 @@ TEST(elixirlsp_import_only_atom_form) {
     PASS();
 }
 
+/* ── Capability pass (PR-2.7a) ─────────────────────────────────── */
+
+/* `alias __MODULE__.Sub` expands against the enclosing module chain. */
+TEST(elixirlsp_module_attr_alias) {
+    const char *src = "defmodule Outer do\n"
+                      "  defmodule Sub do\n"
+                      "    def go, do: :ok\n"
+                      "  end\n"
+                      "  alias __MODULE__.Sub\n"
+                      "  def run, do: Sub.go()\n"
+                      "end\n";
+    CBMFileResult *r = extract_elixir(src);
+    ASSERT(r);
+    ASSERT(find_resolved(r, "run", "go/0", "lsp_ex_qualified") != NULL);
+    cbm_free_result(r);
+    PASS();
+}
+
+/* defdelegate to a same-file module (with as:) emits lsp_ex_delegate from the
+ * delegator to the target. */
+TEST(elixirlsp_delegate_samefile) {
+    const char *src = "defmodule Outer do\n"
+                      "  defmodule Impl do\n"
+                      "    def get(k), do: k\n"
+                      "  end\n"
+                      "  alias Outer.Impl\n"
+                      "  defdelegate fetch(k), to: Impl, as: :get\n"
+                      "end\n";
+    CBMFileResult *r = extract_elixir(src);
+    ASSERT(r);
+    const CBMResolvedCall *rc = find_resolved(r, "fetch/1", "get/1", "lsp_ex_delegate");
+    ASSERT(rc != NULL);
+    cbm_free_result(r);
+    PASS();
+}
+
+/* defdelegate to a module in another file resolves via the cross map. */
+TEST(elixirlsp_delegate_cross) {
+    const char *src = "defmodule Mainx do\n"
+                      "  defdelegate double(x), to: Mathx\n"
+                      "end\n";
+    CBMArena arena;
+    cbm_arena_init(&arena);
+    CBMResolvedCallArray out;
+    memset(&out, 0, sizeof(out));
+    CBMLSPDef defs[4];
+    cross_defs(defs);
+    cbm_run_elixir_lsp_cross(&arena, src, (int)strlen(src), "test.mainx", defs, 4, NULL, NULL, 0,
+                             NULL, &out);
+    const CBMResolvedCall *rc = cross_find(&out, "test.mathx.double/1", "lsp_ex_delegate");
+    ASSERT(rc != NULL);
+    ASSERT(rc->caller_qn && strstr(rc->caller_qn, "double/1") != NULL);
+    cbm_arena_destroy(&arena);
+    PASS();
+}
+
+/* defdelegate to a curated stdlib module classifies lsp_ex_stdlib. */
+TEST(elixirlsp_delegate_stdlib) {
+    const char *src = "defmodule M do\n"
+                      "  defdelegate fetch(m, k), to: Map\n"
+                      "end\n";
+    CBMFileResult *r = extract_elixir(src);
+    ASSERT(r);
+    ASSERT(find_resolved(r, "fetch/2", "Map.fetch/2", "lsp_ex_stdlib") != NULL);
+    cbm_free_result(r);
+    PASS();
+}
+
 /* A resolver run over an empty module emits nothing and does not crash. */
 TEST(elixirlsp_empty_module) {
     const char *src = "defmodule Empty do\nend\n";
@@ -683,6 +751,10 @@ SUITE(elixir_lsp) {
     RUN_TEST(elixirlsp_capture_unknown_zero_edge);
     RUN_TEST(elixirlsp_erlang_atom_module);
     RUN_TEST(elixirlsp_dep_call_external_cross);
+    RUN_TEST(elixirlsp_module_attr_alias);
+    RUN_TEST(elixirlsp_delegate_samefile);
+    RUN_TEST(elixirlsp_delegate_cross);
+    RUN_TEST(elixirlsp_delegate_stdlib);
     RUN_TEST(elixirlsp_import_only_atom_form);
     RUN_TEST(elixirlsp_import_only_stdlib);
     RUN_TEST(elixirlsp_import_only_arity_mismatch);
