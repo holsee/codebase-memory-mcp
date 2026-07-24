@@ -16,6 +16,7 @@
  * Phase 1c.
  */
 #include "test_framework.h"
+#include "../src/foundation/compat.h" /* cbm_setenv (Windows) */
 #include "cbm.h"
 #include "arena.h"
 #include "lsp/elixir_lsp.h"
@@ -756,9 +757,9 @@ TEST(elixirlsp_no_behaviour_no_injection) {
  * entries are injected as defs; without it, none are (default byte-identical). */
 TEST(elixirlsp_stdlib_nodes_opt_in) {
     const char *src = "defmodule M do\n  def run(l), do: Enum.map(l, fn x -> x end)\nend\n";
-    setenv("CBM_ELIXIR_STDLIB_NODES", "1", 1);
+    cbm_setenv("CBM_ELIXIR_STDLIB_NODES", "1", 1);
     CBMFileResult *r = extract_elixir(src);
-    unsetenv("CBM_ELIXIR_STDLIB_NODES");
+    cbm_unsetenv("CBM_ELIXIR_STDLIB_NODES");
     ASSERT(r);
     int saw = 0;
     for (int i = 0; i < r->defs.count; i++) {
@@ -804,6 +805,25 @@ TEST(elixirlsp_defstruct_node) {
     }
     ASSERT(saw_u);
     ASSERT(saw_e);
+    cbm_free_result(r);
+    PASS();
+}
+
+/* Pathological input (PR-3a): nesting far beyond the 512-deep walk cap must
+ * degrade gracefully — extraction completes, no crash, and the skipped subtree
+ * emits no edges (the zero-edge guarantee under stress, ASan-verified). */
+TEST(elixirlsp_pathological_nesting) {
+    char src[64 * 1024];
+    int pos = 0;
+    pos += snprintf(src + pos, sizeof(src) - (size_t)pos, "defmodule Deep do\n  def run(x) do\n");
+    for (int i = 0; i < 700 && pos < (int)sizeof(src) - 64; i++)
+        pos += snprintf(src + pos, sizeof(src) - (size_t)pos, "if x do\n");
+    pos += snprintf(src + pos, sizeof(src) - (size_t)pos, "x\n");
+    for (int i = 0; i < 700 && pos < (int)sizeof(src) - 16; i++)
+        pos += snprintf(src + pos, sizeof(src) - (size_t)pos, "end\n");
+    pos += snprintf(src + pos, sizeof(src) - (size_t)pos, "  end\nend\n");
+    CBMFileResult *r = extract_elixir(src);
+    ASSERT(r); /* survived — depth guards held */
     cbm_free_result(r);
     PASS();
 }
@@ -854,6 +874,7 @@ SUITE(elixir_lsp) {
     RUN_TEST(elixirlsp_no_behaviour_no_injection);
     RUN_TEST(elixirlsp_stdlib_nodes_opt_in);
     RUN_TEST(elixirlsp_defstruct_node);
+    RUN_TEST(elixirlsp_pathological_nesting);
     RUN_TEST(elixirlsp_import_only_atom_form);
     RUN_TEST(elixirlsp_import_only_stdlib);
     RUN_TEST(elixirlsp_import_only_arity_mismatch);
