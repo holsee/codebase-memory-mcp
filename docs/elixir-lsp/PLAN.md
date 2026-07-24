@@ -515,7 +515,7 @@ other languages). `scripts/test.sh` full suite is the per-PR guard.
 | PR-0e vars + contract strength | `0a25d2f4` | ☑ 2026-07-23 |
 | Checkpoint C1 recorded (`testing/AFTER-PHASE-0.md`) | — | ☑ 2026-07-24 |
 | PR-1a skeleton + wiring + originality rows | `15985052` | ☑ 2026-07-24 |
-| PR-1b scopes/aliases/imports resolution | | ☐ |
+| PR-1b scopes/aliases/imports resolution | `d7da0ca7` | ☑ 2026-07-24 |
 | PR-1c pipes/captures/default arities | | ☐ |
 | PR-2a stdlib seed | | ☐ |
 | PR-2b cross-file fallback tier | | ☐ |
@@ -634,6 +634,27 @@ other languages). `scripts/test.sh` full suite is the per-PR guard.
   calibrate them against real resolution). Delivery: three **stacked** PRs
   (PR-1a→1b→1c) on the fork; a full interim checkpoint (`AFTER-PHASE-1.md`,
   M1–M5 + rubric) is recorded at the tip of the stack.
+- 2026-07-24 — PR-1b landed (`d7da0ca7`). Resolution core: two-pass walk
+  (PASS 1 collects file-defined modules + line-ordered alias/import/use
+  directives incl. multi-alias `Foo.{Bar,Baz}`, `as:`, transitive chaining;
+  PASS 2 tracks the enclosing def QN = `module_qn.name` — matching the
+  extractor's path-based QN so CALLS edges source correctly — and resolves
+  local (`lsp_ex_local`) and same-file-qualified (`lsp_ex_qualified`) calls).
+  **Key architectural finding:** Elixir def QNs are path-based
+  (`<module_qn>.<name>`, module name not woven in), so a def resolves via
+  `cbm_registry_lookup_symbol(module_qn, name)` whether the call was bare or
+  qualified against a *same-file* module. **Cross-file / cross-module
+  resolution is therefore Phase 2b** (mapping a dotted module name to another
+  file's defs needs the project-wide registry) — PR-1b keeps the zero-edge
+  guarantee for external / variable-module / `apply` dispatch. Graph-level M4
+  signal confirmed on `elixir_showcase`: a same-module CALLS edge now carries
+  `strategy=lsp_ex_local` (0 → present); cross-file `User.new`/`Math.double`
+  and the `&double/1` capture correctly stay textual (Phase 2b / Phase 1c).
+  10 `test_elixir_lsp` cases + 8 `lrp_elixir_s1..s8` probe scenarios (S3 the
+  documented cross-file RED). Full suite 6637/0. Note: the textual resolver
+  already resolves much of this corpus by simple-name, so PR-1b's single-file
+  value is strategy-tagging (M4), alias-gated precision, and zero-edge
+  discipline; the ≥70 % M4 target is Phase 2.
 - 2026-07-24 — Test-coverage audit + backfill. Found three added code paths
   with no test exercising them: PR-0d's multi-alias `Foo.{Bar, Baz}` expansion
   and `alias X, as: Y` handling (the grammar_imports fixture used only plain
