@@ -43,14 +43,26 @@ typedef struct {
 
     /* alias / require-as map: alias_local[i] is the short name as written in
      * this file (e.g. "Bar" from `alias Foo.Bar`, or the `as:` name);
-     * alias_target[i] is the fully-qualified module it expands to. */
+     * alias_target[i] is the fully-qualified module it expands to;
+     * alias_line[i] is the 1-based line of the directive (Elixir aliases are
+     * line-ordered — a call resolves only against aliases declared at or above
+     * it). */
     const char **alias_local;
     const char **alias_target;
+    int *alias_line;
     int alias_count;
     int alias_cap;
 
+    /* Modules defined in this file (dotted, nesting joined — e.g. "Foo.Bar").
+     * Used to gate qualified-call resolution: a `Mod.fun(...)` call resolves
+     * only when Mod (alias-expanded) is a module defined in this file or the
+     * current module — cross-file modules are Phase 2b (zero-edge until then). */
+    const char **defined_modules;
+    int defined_module_count;
+    int defined_module_cap;
+
     /* import map: import_module[i] is a module whose functions are imported
-     * into local scope (subject to only:/except: selectors, Phase 1b). */
+     * into local scope (only:/except: selector resolution is Phase 2). */
     const char **import_module;
     int import_count;
     int import_cap;

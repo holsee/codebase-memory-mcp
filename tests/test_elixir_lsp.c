@@ -2,15 +2,18 @@
  * test_elixir_lsp.c — Tests for the Elixir Light Semantic Pass.
  *
  * The resolver populates result->resolved_calls with CBMResolvedCall edges.
- * Like the Perl pass, def QNs are path-based (module name not woven in), so for
- * these single-file fixtures every def lands under the "test"/"main.ex" module
- * QN; the helpers below use substring matching on the unique callee fragment.
+ * Def QNs are path-based (`<module_qn>.<name>`; the Elixir module name is not
+ * woven in), so for these single-file fixtures every def lands under the
+ * "test"/"main.ex" module QN and the helpers below match on the unique
+ * caller/callee name fragment plus the resolution strategy.
  *
- * PR-1a scaffold: the resolver is a no-op walk, so the only guarantee is that
- * it runs without crashing and emits no edges. PR-1b replaces the placeholder
- * with the qualified/local resolution scenarios (alias expansion, imports,
- * same-module calls, and the zero-edge negatives); PR-1c adds name/arity
- * identity (pipes, captures, default-arg fan-out).
+ * Phase 1b covers rungs (a) qualified and (c) local: local calls resolve to
+ * file-local defs (lsp_ex_local); qualified `Mod.fun` calls resolve only when
+ * Mod (alias-expanded) is a module defined in this file or __MODULE__
+ * (lsp_ex_qualified). Cross-file / external-module resolution, and import
+ * only:/except: selectors, are Phase 2b/2 — the negative tests pin the
+ * zero-edge boundary. Arity identity (pipes, captures, default fan-out) is
+ * Phase 1c.
  */
 #include "test_framework.h"
 #include "cbm.h"
@@ -24,24 +27,34 @@ static CBMFileResult *extract_elixir(const char *source) {
                             NULL, NULL);
 }
 
-static int find_resolved(const CBMFileResult *r, const char *callerFrag, const char *calleeFrag) {
+static const CBMResolvedCall *find_resolved(const CBMFileResult *r, const char *callerFrag,
+                                            const char *calleeFrag, const char *strategy) {
     for (int i = 0; i < r->resolved_calls.count; i++) {
         const CBMResolvedCall *rc = &r->resolved_calls.items[i];
-        if (rc->caller_qn && strstr(rc->caller_qn, callerFrag) && rc->callee_qn &&
-            strstr(rc->callee_qn, calleeFrag))
-            return i;
+        if (!rc->caller_qn || !rc->callee_qn)
+            continue;
+        if (!strstr(rc->caller_qn, callerFrag) || !strstr(rc->callee_qn, calleeFrag))
+            continue;
+        if (strategy && (!rc->strategy || strcmp(rc->strategy, strategy) != 0))
+            continue;
+        return rc;
     }
-    return -1;
+    return NULL;
 }
 
-/* Silence unused-function warnings until PR-1b uses the resolution helper. */
-static int elixir_lsp_find_resolved_unused(const CBMFileResult *r) {
-    return find_resolved(r, "", "");
+static int count_resolved(const CBMFileResult *r, const char *calleeFrag) {
+    int n = 0;
+    for (int i = 0; i < r->resolved_calls.count; i++) {
+        const CBMResolvedCall *rc = &r->resolved_calls.items[i];
+        if (rc->callee_qn && strstr(rc->callee_qn, calleeFrag))
+            n++;
+    }
+    return n;
 }
 
-/* ── PR-1a: skeleton runs and emits nothing ────────────────────── */
+/* ── (c) Local same-module resolution ──────────────────────────── */
 
-TEST(elixirlsp_skeleton_runs_no_edges) {
+TEST(elixirlsp_local_same_module_call) {
     const char *src = "defmodule Accounts do\n"
                       "  def create(attrs) do\n"
                       "    validate(attrs)\n"
@@ -50,15 +63,162 @@ TEST(elixirlsp_skeleton_runs_no_edges) {
                       "end\n";
     CBMFileResult *r = extract_elixir(src);
     ASSERT(r);
-    /* The resolver ran (no crash). PR-1a emits no resolved calls yet — PR-1b
-     * flips this: `create` -> `validate` becomes an lsp_ex_local edge. */
-    ASSERT_EQ(0, r->resolved_calls.count);
-    (void)elixir_lsp_find_resolved_unused;
+    ASSERT(find_resolved(r, "create", "validate", "lsp_ex_local") != NULL);
     cbm_free_result(r);
     PASS();
 }
 
-TEST(elixirlsp_skeleton_empty_module) {
+/* ── (a) Qualified resolution via alias to a same-file module ──── */
+
+TEST(elixirlsp_qualified_via_alias) {
+    const char *src = "defmodule Outer do\n"
+                      "  defmodule Inner do\n"
+                      "    def helper(x), do: x\n"
+                      "  end\n"
+                      "  alias Outer.Inner\n"
+                      "  def run(x) do\n"
+                      "    Inner.helper(x)\n"
+                      "  end\n"
+                      "end\n";
+    CBMFileResult *r = extract_elixir(src);
+    ASSERT(r);
+    ASSERT(find_resolved(r, "run", "helper", "lsp_ex_qualified") != NULL);
+    cbm_free_result(r);
+    PASS();
+}
+
+TEST(elixirlsp_qualified_as_alias) {
+    const char *src = "defmodule Outer do\n"
+                      "  defmodule Inner do\n"
+                      "    def helper(x), do: x\n"
+                      "  end\n"
+                      "  alias Outer.Inner, as: Helper\n"
+                      "  def run(x) do\n"
+                      "    Helper.helper(x)\n"
+                      "  end\n"
+                      "end\n";
+    CBMFileResult *r = extract_elixir(src);
+    ASSERT(r);
+    ASSERT(find_resolved(r, "run", "helper", "lsp_ex_qualified") != NULL);
+    cbm_free_result(r);
+    PASS();
+}
+
+TEST(elixirlsp_qualified_multi_alias) {
+    const char *src = "defmodule Outer do\n"
+                      "  defmodule Bar do\n"
+                      "    def go(x), do: x\n"
+                      "  end\n"
+                      "  defmodule Baz do\n"
+                      "    def stop(x), do: x\n"
+                      "  end\n"
+                      "  alias Outer.{Bar, Baz}\n"
+                      "  def run(x) do\n"
+                      "    Bar.go(x)\n"
+                      "    Baz.stop(x)\n"
+                      "  end\n"
+                      "end\n";
+    CBMFileResult *r = extract_elixir(src);
+    ASSERT(r);
+    ASSERT(find_resolved(r, "run", "go", "lsp_ex_qualified") != NULL);
+    ASSERT(find_resolved(r, "run", "stop", "lsp_ex_qualified") != NULL);
+    cbm_free_result(r);
+    PASS();
+}
+
+TEST(elixirlsp_qualified_transitive_alias) {
+    const char *src = "defmodule App do\n"
+                      "  defmodule Core do\n"
+                      "    defmodule Impl do\n"
+                      "      def go, do: :ok\n"
+                      "    end\n"
+                      "  end\n"
+                      "  alias App.Core\n"
+                      "  alias Core.Impl\n"
+                      "  def run do\n"
+                      "    Impl.go()\n"
+                      "  end\n"
+                      "end\n";
+    CBMFileResult *r = extract_elixir(src);
+    ASSERT(r);
+    ASSERT(find_resolved(r, "run", "go", "lsp_ex_qualified") != NULL);
+    cbm_free_result(r);
+    PASS();
+}
+
+/* Alias line-visibility: a qualified call ABOVE the alias does not resolve
+ * (the bare module name is not a defined module); the call BELOW it does. */
+TEST(elixirlsp_alias_line_visibility) {
+    const char *src = "defmodule Outer do\n"
+                      "  defmodule Helpers do\n"
+                      "    def h, do: :ok\n"
+                      "  end\n"
+                      "  def early, do: Helpers.h()\n"
+                      "  alias Outer.Helpers\n"
+                      "  def late, do: Helpers.h()\n"
+                      "end\n";
+    CBMFileResult *r = extract_elixir(src);
+    ASSERT(r);
+    ASSERT(find_resolved(r, "late", "h", "lsp_ex_qualified") != NULL);
+    ASSERT(find_resolved(r, "early", "h", NULL) == NULL);
+    cbm_free_result(r);
+    PASS();
+}
+
+/* ── Zero-edge guarantees ──────────────────────────────────────── */
+
+/* An external module (not defined in this file) does not resolve, even when a
+ * same-named function exists locally — the qualified gate blocks the false
+ * cross-module edge. */
+TEST(elixirlsp_external_module_no_edge) {
+    const char *src = "defmodule M do\n"
+                      "  def upcase(s), do: s\n"
+                      "  def run(s) do\n"
+                      "    String.upcase(s)\n"
+                      "  end\n"
+                      "end\n";
+    CBMFileResult *r = extract_elixir(src);
+    ASSERT(r);
+    /* No qualified edge to the local upcase from String.upcase. */
+    ASSERT(find_resolved(r, "run", "upcase", "lsp_ex_qualified") == NULL);
+    cbm_free_result(r);
+    PASS();
+}
+
+/* Dynamic dispatch on a variable module and apply/3 emit no edge. */
+TEST(elixirlsp_dynamic_dispatch_no_edge) {
+    const char *src = "defmodule M do\n"
+                      "  def handler(x), do: x\n"
+                      "  def run(mod, x) do\n"
+                      "    mod.handler(x)\n"
+                      "    apply(mod, :handler, [x])\n"
+                      "  end\n"
+                      "end\n";
+    CBMFileResult *r = extract_elixir(src);
+    ASSERT(r);
+    ASSERT_EQ(0, count_resolved(r, "handler"));
+    cbm_free_result(r);
+    PASS();
+}
+
+/* An import directive is parsed without breaking local resolution. */
+TEST(elixirlsp_import_does_not_break_resolution) {
+    const char *src = "defmodule M do\n"
+                      "  import Enum\n"
+                      "  def run(x) do\n"
+                      "    helper(x)\n"
+                      "  end\n"
+                      "  def helper(x), do: x\n"
+                      "end\n";
+    CBMFileResult *r = extract_elixir(src);
+    ASSERT(r);
+    ASSERT(find_resolved(r, "run", "helper", "lsp_ex_local") != NULL);
+    cbm_free_result(r);
+    PASS();
+}
+
+/* A resolver run over an empty module emits nothing and does not crash. */
+TEST(elixirlsp_empty_module) {
     const char *src = "defmodule Empty do\nend\n";
     CBMFileResult *r = extract_elixir(src);
     ASSERT(r);
@@ -70,6 +230,14 @@ TEST(elixirlsp_skeleton_empty_module) {
 /* ── Suite registration ────────────────────────────────────────── */
 
 SUITE(elixir_lsp) {
-    RUN_TEST(elixirlsp_skeleton_runs_no_edges);
-    RUN_TEST(elixirlsp_skeleton_empty_module);
+    RUN_TEST(elixirlsp_local_same_module_call);
+    RUN_TEST(elixirlsp_qualified_via_alias);
+    RUN_TEST(elixirlsp_qualified_as_alias);
+    RUN_TEST(elixirlsp_qualified_multi_alias);
+    RUN_TEST(elixirlsp_qualified_transitive_alias);
+    RUN_TEST(elixirlsp_alias_line_visibility);
+    RUN_TEST(elixirlsp_external_module_no_edge);
+    RUN_TEST(elixirlsp_dynamic_dispatch_no_edge);
+    RUN_TEST(elixirlsp_import_does_not_break_resolution);
+    RUN_TEST(elixirlsp_empty_module);
 }

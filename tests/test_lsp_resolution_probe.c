@@ -1666,6 +1666,117 @@ TEST(lrp_python_usage_instantiation) {
 }
 
 /* ══════════════════════════════════════════════════════════════════════
+ * ─── ELIXIR (per-file LSP WIRED in Phase 1; cross-file is Phase 2b) ──
+ * ══════════════════════════════════════════════════════════════════════
+ * elixir_lsp resolves same-module (local) and same-file qualified calls with
+ * lsp_ex_* strategies (Phase 1b). Cross-file/cross-module resolution is Phase
+ * 2b (cbm_run_elixir_lsp_cross, not yet wired), so a two-file scenario resolves
+ * only via the textual name resolver — GREEN by floor, RED for lsp-precision.
+ * Capture/pipe arity precision is Phase 1c (the edge still forms).
+ */
+
+/* S1 — Elixir same-module local call. */
+TEST(lrp_elixir_s1_local_call) {
+    static const LRP_File f[] = {
+        {"accounts.ex", "defmodule Accounts do\n"
+                        "  def create(a), do: validate(a)\n"
+                        "  def validate(a), do: a\n"
+                        "end\n"}};
+    ASSERT_TRUE(lrp_assert_calls(f, 1, 1, "elixir/S1/local_call", 1));
+    PASS();
+}
+
+/* S2 — Elixir qualified call via alias to a same-file nested module. */
+TEST(lrp_elixir_s2_qualified_alias) {
+    static const LRP_File f[] = {
+        {"outer.ex", "defmodule Outer do\n"
+                     "  defmodule Inner do\n"
+                     "    def helper(x), do: x\n"
+                     "  end\n"
+                     "  alias Outer.Inner\n"
+                     "  def run(x), do: Inner.helper(x)\n"
+                     "end\n"}};
+    ASSERT_TRUE(lrp_assert_calls(f, 1, 1, "elixir/S2/qualified_alias", 1));
+    PASS();
+}
+
+/* S3 — Elixir cross-file call (RED: needs elixir_lsp_cross, Phase 2b). */
+TEST(lrp_elixir_s3_crossfile_call) {
+    static const LRP_File f[] = {
+        {"mathx.ex", "defmodule Mathx do\n  def double(x), do: x * 2\nend\n"},
+        {"mainx.ex", "defmodule Mainx do\n  def run(x), do: Mathx.double(x)\nend\n"}};
+    /* Floor met by the textual name resolver; lsp-precise cross-file is Phase 2b. */
+    ASSERT_TRUE(lrp_assert_calls(f, 2, 1, "elixir/S3/crossfile_call", 0));
+    PASS();
+}
+
+/* S4 — Elixir pipe chain (edge forms; +1 arity precision is Phase 1c). */
+TEST(lrp_elixir_s4_pipe_chain) {
+    static const LRP_File f[] = {
+        {"pipex.ex", "defmodule Pipex do\n"
+                     "  def double(x), do: x * 2\n"
+                     "  def run(x), do: x |> double()\n"
+                     "end\n"}};
+    ASSERT_TRUE(lrp_assert_calls(f, 1, 1, "elixir/S4/pipe_chain", 1));
+    PASS();
+}
+
+/* S5 — Elixir capture &fun/1 (edge forms; capture arity is Phase 1c). */
+TEST(lrp_elixir_s5_capture) {
+    static const LRP_File f[] = {
+        {"capx.ex", "defmodule Capx do\n"
+                    "  def double(x), do: x * 2\n"
+                    "  def run(list), do: Enum.map(list, &double/1)\n"
+                    "end\n"}};
+    ASSERT_TRUE(lrp_assert_calls(f, 1, 1, "elixir/S5/capture", 1));
+    PASS();
+}
+
+/* S6 — Elixir defimpl method body calling a same-file module. */
+TEST(lrp_elixir_s6_protocol_impl) {
+    static const LRP_File f[] = {
+        {"proto.ex", "defmodule Helpers do\n"
+                     "  def measure(x), do: x\n"
+                     "end\n"
+                     "defprotocol Sizeable do\n"
+                     "  def size(x)\n"
+                     "end\n"
+                     "defimpl Sizeable, for: List do\n"
+                     "  def size(x), do: Helpers.measure(x)\n"
+                     "end\n"}};
+    ASSERT_TRUE(lrp_assert_calls(f, 1, 1, "elixir/S6/protocol_impl", 1));
+    PASS();
+}
+
+/* S7 — Elixir GenServer callback calling a same-module helper. */
+TEST(lrp_elixir_s7_genserver_callback) {
+    static const LRP_File f[] = {
+        {"server.ex", "defmodule Server do\n"
+                      "  use GenServer\n"
+                      "  def handle_call(:x, _from, state), do: {:reply, work(state), state}\n"
+                      "  def work(state), do: state\n"
+                      "end\n"}};
+    ASSERT_TRUE(lrp_assert_calls(f, 1, 1, "elixir/S7/genserver_callback", 1));
+    PASS();
+}
+
+/* S8 — Elixir call across sibling nested modules via alias. */
+TEST(lrp_elixir_s8_nested_sibling) {
+    static const LRP_File f[] = {
+        {"app.ex", "defmodule App do\n"
+                   "  defmodule Repo do\n"
+                   "    def get(id), do: id\n"
+                   "  end\n"
+                   "  defmodule Service do\n"
+                   "    alias App.Repo\n"
+                   "    def fetch(id), do: Repo.get(id)\n"
+                   "  end\n"
+                   "end\n"}};
+    ASSERT_TRUE(lrp_assert_calls(f, 1, 1, "elixir/S8/nested_sibling", 1));
+    PASS();
+}
+
+/* ══════════════════════════════════════════════════════════════════════
  * SUITE registration
  * ══════════════════════════════════════════════════════════════════════ */
 
@@ -1771,6 +1882,17 @@ SUITE(lsp_resolution_probe) {
     RUN_TEST(lrp_php_s6_inherited_method);
     RUN_TEST(lrp_php_s7_interface_call);
     RUN_TEST(lrp_php_s8_field_type_hint);
+
+    /* ── Elixir (per-file LSP WIRED, Phase 1; cross-file Phase 2b) ── */
+    /* S1,S2,S4–S8 GREEN (per-file resolves or edge forms); S3 RED (cross-file) */
+    RUN_TEST(lrp_elixir_s1_local_call);
+    RUN_TEST(lrp_elixir_s2_qualified_alias);
+    RUN_TEST(lrp_elixir_s3_crossfile_call);
+    RUN_TEST(lrp_elixir_s4_pipe_chain);
+    RUN_TEST(lrp_elixir_s5_capture);
+    RUN_TEST(lrp_elixir_s6_protocol_impl);
+    RUN_TEST(lrp_elixir_s7_genserver_callback);
+    RUN_TEST(lrp_elixir_s8_nested_sibling);
 
     /* ── USAGE-edge bonus probes ── */
     RUN_TEST(lrp_go_usage_struct_literal);
