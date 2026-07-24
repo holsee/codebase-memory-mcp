@@ -27,12 +27,14 @@
  *     calls present it as a bare `identifier`.
  *
  * QN scheme: the structural extractor names each def via cbm_fqn_compute — the
- * QN is `<module_qn>.<name>` where module_qn is the file's path-based module
- * (the Elixir module name is NOT woven in; that is Class-node territory, D6).
- * Every def in a file therefore shares the module_qn prefix, so a def resolves
- * via cbm_registry_lookup_symbol(module_qn, name) whether the call was written
- * bare or qualified against a same-file module. Cross-file / cross-module
- * resolution (mapping a dotted module name to another file's defs) is Phase 2b.
+ * QN is `<module_qn>.<name>/<arity>` where module_qn is the file's path-based
+ * module (the Elixir module name is NOT woven in; that is Class-node territory,
+ * D6) and `/arity` is the name/arity identity (D3). Every def in a file shares
+ * the module_qn prefix, so a def resolves via
+ * cbm_registry_lookup_symbol(module_qn, "name/arity") whether the call was
+ * written bare or qualified against a same-file module. Cross-file /
+ * cross-module resolution (mapping a dotted module name to another file's defs)
+ * is Phase 2b.
  *
  * Resolution ladder (Phase 1b — rungs (a) qualified and (c) local):
  *   - local `fun(args)`      → file-local def by name           → lsp_ex_local
@@ -40,8 +42,10 @@
  *     `__MODULE__`, then file-local def by name
  * Everything else — a qualified call to an external/cross-file module, a
  * variable-module dispatch, `apply/3`, `unquote` — emits NO edge (Phase 2b or
- * genuinely dynamic). Arity-precise identity (name/arity), pipes and captures
- * are Phase 1c. Import only:/except: selector resolution is Phase 2.
+ * genuinely dynamic). Name/arity identity (Phase 1c) suffixes every def QN and
+ * lookup with `/arity` (pipes add +1, captures `&f/N` carry the literal), via
+ * the shared cbm_elixir_*_arity helpers. Import only:/except: selector
+ * resolution is Phase 2.
  *
  * Zero-edge guarantee: an unresolvable callee emits NO edge (a false edge is
  * worse than a missing one).
@@ -351,19 +355,32 @@ static void elixir_emit(ElixirLSPContext *ctx, const char *callee_qn, const char
     cbm_resolvedcall_push(ctx->resolved_calls, ctx->arena, rc);
 }
 
-/* Resolve a local `fun(args)` call against the file-local module. */
-static void elixir_resolve_local(ElixirLSPContext *ctx, const char *fun) {
+/* Call-site arity at a call/capture node (name/arity identity, D3). */
+static int elixir_callsite_arity(ElixirLSPContext *ctx, TSNode node) {
+    int arity = 0;
+    if (!cbm_elixir_capture_arity(node, ctx->source, &arity))
+        arity = cbm_elixir_call_arity(node, ctx->source);
+    return arity;
+}
+
+/* Resolve a local `fun(args)` call against the file-local module. The registry
+ * key is `fun/arity` — def QNs are arity-suffixed (D3), so the lookup must be
+ * too. */
+static void elixir_resolve_local(ElixirLSPContext *ctx, TSNode node, const char *fun) {
     if (!fun || !fun[0] || !ctx->module_qn)
         return;
-    const CBMRegisteredFunc *f = cbm_registry_lookup_symbol(ctx->registry, ctx->module_qn, fun);
+    const char *key = cbm_arena_sprintf(ctx->arena, "%s/%d", fun, elixir_callsite_arity(ctx, node));
+    const CBMRegisteredFunc *f = cbm_registry_lookup_symbol(ctx->registry, ctx->module_qn, key);
     if (f && f->qualified_name)
         elixir_emit(ctx, f->qualified_name, "lsp_ex_local", ELIXIR_CONF_LOCAL);
 }
 
 /* Resolve a qualified `Mod.fun(args)` call. Mod is alias-expanded; resolution
  * proceeds only when Mod is a module defined in this file or __MODULE__ —
- * external/cross-file modules are Phase 2b (zero-edge). */
-static void elixir_resolve_qualified(ElixirLSPContext *ctx, const char *callee, int line) {
+ * external/cross-file modules are Phase 2b (zero-edge). The registry key is
+ * `fun/arity` (D3). */
+static void elixir_resolve_qualified(ElixirLSPContext *ctx, TSNode node, const char *callee,
+                                     int line) {
     const char *dot = strrchr(callee, '.');
     if (!dot || dot == callee)
         return;
@@ -385,7 +402,8 @@ static void elixir_resolve_qualified(ElixirLSPContext *ctx, const char *callee, 
     if (!same_module)
         return; /* cross-file / external module — Phase 2b */
 
-    const CBMRegisteredFunc *f = cbm_registry_lookup_symbol(ctx->registry, ctx->module_qn, fun);
+    const char *key = cbm_arena_sprintf(ctx->arena, "%s/%d", fun, elixir_callsite_arity(ctx, node));
+    const CBMRegisteredFunc *f = cbm_registry_lookup_symbol(ctx->registry, ctx->module_qn, key);
     if (f && f->qualified_name)
         elixir_emit(ctx, f->qualified_name, "lsp_ex_qualified", ELIXIR_CONF_QUALIFIED);
 }
@@ -407,11 +425,11 @@ static void elixir_resolve_calls_in(ElixirLSPContext *ctx,
             if (name && name[0] && !cbm_elixir_def_macro(name) && !elixir_is_directive_kw(name) &&
                 strcmp(name, "defmodule") != 0 && strcmp(name, "defimpl") != 0 &&
                 strcmp(name, "apply") != 0)
-                elixir_resolve_local(ctx, name);
+                elixir_resolve_local(ctx, node, name);
         } else if (strcmp(tk, "dot") == 0) {
             char *callee = elixir_node_text(ctx, target);
             if (callee && callee[0])
-                elixir_resolve_qualified(ctx, callee, (int)ts_node_start_point(node).row + 1);
+                elixir_resolve_qualified(ctx, node, callee, (int)ts_node_start_point(node).row + 1);
         }
     }
 
@@ -458,8 +476,13 @@ static void elixir_resolve_walk(ElixirLSPContext *ctx, TSNode node) { // NOLINT(
             }
             if (name && name[0] && ctx->module_qn) {
                 const char *saved = ctx->enclosing_func_qn;
+                /* Caller QN = module_qn.name/max-arity, byte-identical to the
+                 * def node (extract_defs.c) and compute_elixir_func_qn — the
+                 * LSP↔textual join is an exact strcmp on the caller QN. */
+                int mn = 0;
+                int mx = cbm_elixir_def_arity(node, ctx->source, &mn);
                 ctx->enclosing_func_qn =
-                    cbm_arena_sprintf(ctx->arena, "%s.%s", ctx->module_qn, name);
+                    cbm_arena_sprintf(ctx->arena, "%s.%s/%d", ctx->module_qn, name, mx);
                 /* Resolve calls in the body: the do_block, and any keyword-form
                  * body / guard-free trailing args (skip the head at index 0). */
                 TSNode body = elixir_find_do_block(node);

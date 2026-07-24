@@ -2296,6 +2296,21 @@ void handle_calls(CBMExtractCtx *ctx, TSNode node, const CBMLangSpec *spec, Walk
                 }
             }
 
+            // Name/arity identity (D3): suffix the Elixir callee with `/arity`
+            // so it matches the arity-suffixed def QN on both resolution paths
+            // (simple_name and resolve_same_module). `call.arg_count` is unused
+            // here — it is not populated for Elixir `call` nodes — so the arity
+            // is computed straight from the AST. A capture `&fun/N` carries its
+            // arity literally; otherwise it is the positional arg count (+1 for
+            // a `|>` piped subject).
+            if (ctx->language == CBM_LANG_ELIXIR && call.callee_name && call.callee_name[0]) {
+                int arity = 0;
+                if (!cbm_elixir_capture_arity(node, ctx->source, &arity)) {
+                    arity = cbm_elixir_call_arity(node, ctx->source);
+                }
+                call.callee_name = cbm_arena_sprintf(ctx->arena, "%s/%d", call.callee_name, arity);
+            }
+
             cbm_calls_push(&ctx->result->calls, ctx->arena, call);
 
             const char **dispatch_suffixes = cbm_string_dispatch_suffixes(ctx->language);

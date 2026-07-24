@@ -217,6 +217,58 @@ TEST(elixirlsp_import_does_not_break_resolution) {
     PASS();
 }
 
+/* ── Name/arity identity (D3, Phase 1c) ────────────────────────── */
+
+/* foo/1 and foo/2 are distinct nodes; a call resolves to the matching arity. */
+TEST(elixirlsp_arity_disambiguation) {
+    const char *src = "defmodule M do\n"
+                      "  def foo(a), do: a\n"
+                      "  def foo(a, b), do: a + b\n"
+                      "  def run(x) do\n"
+                      "    foo(x)\n"
+                      "    foo(x, x)\n"
+                      "  end\n"
+                      "end\n";
+    CBMFileResult *r = extract_elixir(src);
+    ASSERT(r);
+    ASSERT(find_resolved(r, "run", "foo/1", "lsp_ex_local") != NULL);
+    ASSERT(find_resolved(r, "run", "foo/2", "lsp_ex_local") != NULL);
+    cbm_free_result(r);
+    PASS();
+}
+
+/* A pipe adds one argument: `x |> add(1)` resolves add/2, not add/1. */
+TEST(elixirlsp_pipe_arity) {
+    const char *src = "defmodule M do\n"
+                      "  def add(a, b), do: a + b\n"
+                      "  def run(x), do: x |> add(1)\n"
+                      "end\n";
+    CBMFileResult *r = extract_elixir(src);
+    ASSERT(r);
+    ASSERT(find_resolved(r, "run", "add/2", "lsp_ex_local") != NULL);
+    ASSERT(find_resolved(r, "run", "add/1", NULL) == NULL);
+    cbm_free_result(r);
+    PASS();
+}
+
+/* A default arg fans out: `def greet(name, greeting \\ "hi")` defines greet/1
+ * and greet/2, so both a 1-arg and a 2-arg call resolve. */
+TEST(elixirlsp_default_arg_fanout) {
+    const char *src = "defmodule M do\n"
+                      "  def greet(name, greeting \\\\ \"hi\"), do: greeting <> name\n"
+                      "  def run() do\n"
+                      "    greet(\"a\")\n"
+                      "    greet(\"a\", \"yo\")\n"
+                      "  end\n"
+                      "end\n";
+    CBMFileResult *r = extract_elixir(src);
+    ASSERT(r);
+    ASSERT(find_resolved(r, "run", "greet/1", "lsp_ex_local") != NULL);
+    ASSERT(find_resolved(r, "run", "greet/2", "lsp_ex_local") != NULL);
+    cbm_free_result(r);
+    PASS();
+}
+
 /* A resolver run over an empty module emits nothing and does not crash. */
 TEST(elixirlsp_empty_module) {
     const char *src = "defmodule Empty do\nend\n";
@@ -239,5 +291,8 @@ SUITE(elixir_lsp) {
     RUN_TEST(elixirlsp_external_module_no_edge);
     RUN_TEST(elixirlsp_dynamic_dispatch_no_edge);
     RUN_TEST(elixirlsp_import_does_not_break_resolution);
+    RUN_TEST(elixirlsp_arity_disambiguation);
+    RUN_TEST(elixirlsp_pipe_arity);
+    RUN_TEST(elixirlsp_default_arg_fanout);
     RUN_TEST(elixirlsp_empty_module);
 }

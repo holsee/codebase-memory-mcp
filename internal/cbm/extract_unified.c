@@ -200,7 +200,13 @@ static const char *compute_elixir_func_qn(CBMExtractCtx *ctx, TSNode node) {
     if (!name || !name[0]) {
         return NULL;
     }
-    return cbm_fqn_compute(ctx->arena, ctx->project, ctx->rel_path, name);
+    // Name/arity identity (D3): the enclosing/caller QN must match the def
+    // node's QN (extract_elixir_func_def) byte-for-byte, or CALLS edges from
+    // this function lose their source. Use MAX arity — one scope per def; the
+    // max-arity node always exists (max ∈ min..max).
+    const char *base = cbm_fqn_compute(ctx->arena, ctx->project, ctx->rel_path, name);
+    int arity = cbm_elixir_def_arity(node, ctx->source, NULL);
+    return cbm_arena_sprintf(ctx->arena, "%s/%d", base, arity);
 }
 
 /* Resolve a CFML tag-function's QN for scope tracking. A <cffunction name="foo">
