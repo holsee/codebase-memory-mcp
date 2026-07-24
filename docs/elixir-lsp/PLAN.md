@@ -520,7 +520,7 @@ other languages). `scripts/test.sh` full suite is the per-PR guard.
 | Checkpoint C1.5 recorded (`testing/AFTER-PHASE-1.md`) | — | ☑ 2026-07-24 |
 | PR-2a stdlib seed | `dde6f85f` | ☑ 2026-07-24 |
 | PR-2b cross-file fallback tier | `9dfb2142` | ☑ 2026-07-24 |
-| PR-2c use-table + behaviours + protocols | | ☐ |
+| PR-2c use-table + behaviours + protocols | `c3071bd6` | ☑ 2026-07-24 |
 | Checkpoint C2 recorded (`testing/AFTER-PHASE-2.md`) | — | ☐ |
 | PR-3a QA hardening | | ☐ |
 | PR-3b docs + promotion + release matrix | | ☐ |
@@ -734,6 +734,24 @@ other languages). `scripts/test.sh` full suite is the per-PR guard.
   cross-file calls in accounts.ex now resolve `lsp_ex_cross` to the user.ex def
   nodes, where C1.5 had them as fuzzy `unique_name` — this is the fuzzy-import
   finding closed for qualified calls. Full suite 6646/0.
+- 2026-07-24 — PR-2c landed (`c3071bd6`). **use-macro table + protocol dispatch.**
+  A `use Framework` injected-function table (Phoenix.Controller/LiveView/Component,
+  Ecto.Schema, ExUnit.Case, GenServer/Supervisor child_spec) + a local-rung pass:
+  a bare call inside a def that is not file-local/Kernel is resolved against the
+  functions the module's `use`d frameworks inject (`lsp_ex_use`). PASS 1 now
+  collects `use` targets into `ctx->use_module`. Protocol dispatch
+  (`Protocol.fun(x)` → the protocol's own def) already flows through the PR-2b
+  cross map (defprotocol emits a Class + its def functions); a unit test pins it.
+  **Scope/honesty:** module-level use-macros (Ecto `field`, ExUnit `test`) have
+  no enclosing function → no caller QN → no edge (correct: a module-level macro
+  is not a fn-to-fn call); only use-injected functions called *inside a def*
+  (Phoenix.Controller.render in an action) resolve. `@behaviour`/`@impl`
+  OVERRIDE-edge linkage deferred (needs behaviour-callback nodes — the PR-2a
+  node-injection tradeoff); the use-table carries the callback knowledge.
+  Elixir cases NOT added to `test_matrix_known_classes.c` (reference-only suite,
+  not run in test_main.c — executable coverage is in `test_elixir_lsp.c`, now 21
+  cases). 2 new tests; full suite 6648/0. **Phase 2 complete** — next is the C2
+  checkpoint.
 - 2026-07-24 — Test-coverage audit + backfill. Found three added code paths
   with no test exercising them: PR-0d's multi-alias `Foo.{Bar, Baz}` expansion
   and `alias X, as: Y` handling (the grammar_imports fixture used only plain
