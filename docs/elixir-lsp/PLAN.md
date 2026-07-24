@@ -521,7 +521,7 @@ other languages). `scripts/test.sh` full suite is the per-PR guard.
 | PR-2a stdlib seed | `dde6f85f` | ☑ 2026-07-24 |
 | PR-2b cross-file fallback tier | `9dfb2142` | ☑ 2026-07-24 |
 | PR-2c use-table + behaviours + protocols | `c3071bd6` | ☑ 2026-07-24 |
-| Checkpoint C2 recorded (`testing/AFTER-PHASE-2.md`) | — | ☐ |
+| Checkpoint C2 recorded (`testing/AFTER-PHASE-2.md`) | — | ☑ 2026-07-24 |
 | PR-3a QA hardening | | ☐ |
 | PR-3b docs + promotion + release matrix | | ☐ |
 
@@ -752,7 +752,22 @@ other languages). `scripts/test.sh` full suite is the per-PR guard.
   not run in test_main.c — executable coverage is in `test_elixir_lsp.c`, now 21
   cases). 2 new tests; full suite 6648/0. **Phase 2 complete** — next is the C2
   checkpoint.
-- 2026-07-24 — Test-coverage audit + backfill. Found three added code paths
+- 2026-07-24 — Checkpoint C2 recorded (`testing/AFTER-PHASE-2.md`), Phase-2 tip
+  (`c3071bd6`) vs Phase-1 tip (C1.5). **M4 (lsp_ex_* CALLS share) +10–15 pts:
+  plug 34.9→44.8 %, phoenix 32.5→42.4 %, analytics 18.3→33.7 %**, driven by
+  cross-file `lsp_ex_cross` edges (plug breakdown: local 412 / cross 121 /
+  qualified 5 LSP vs unique_name 392 / same_module 151 / suffix_match 121
+  textual). Index cost flat; M1 arity 100 %; node counts unchanged (stdlib is
+  knowledge, not nodes). **≥70 % target NOT reached at the edge level (honest):**
+  the textual remainder is captures (`&f/N`), bare imported calls (`import
+  only:`), arity-mismatched sites, and stdlib/project name-collisions — the C2
+  rubric surfaced a concrete one (`Keyword.get/3` mis-resolved by the *textual*
+  pass onto project `Plug.Router.get/3`; the stdlib rung classifies it but
+  can't suppress the textual edge without a node/suppression signal). All
+  enumerated as Phase-3 refinements. Cross-file end-to-end proof (showcase
+  `User.new/2`/`User.promote/1` → `lsp_ex_cross`). Non-Elixir control
+  byte-identical (graph-ui TS 338/764). Rubric (focused, P2): cross-module trace
+  + arity work confirmed; model independently flagged the stdlib collision.
   with no test exercising them: PR-0d's multi-alias `Foo.{Bar, Baz}` expansion
   and `alias X, as: Y` handling (the grammar_imports fixture used only plain
   directives), and PR-0c's *nested* `defimpl` prefix. Added
