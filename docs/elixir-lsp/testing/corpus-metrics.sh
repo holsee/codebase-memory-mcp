@@ -19,7 +19,9 @@ DB="$(ls "$CACHE"/*.db 2>/dev/null | grep -v _config | head -1)"
 [ -z "$DB" ] && { echo "no graph db produced in $CACHE"; exit 1; }
 
 q(){ sqlite3 "$DB" "$1"; }
-node_exists(){ [ "$(q "SELECT COUNT(*) FROM nodes WHERE label='$1' AND qualified_name LIKE '%$2'")" -gt 0 ] && echo yes || echo NO; }
+# Match both the bare QN and the name/arity-suffixed QN (D3, Phase 1c): a
+# Function `User.new` now has qualified_name `...user.new/2`.
+node_exists(){ [ "$(q "SELECT COUNT(*) FROM nodes WHERE label='$1' AND (qualified_name LIKE '%$2' OR qualified_name LIKE '%$2/%')")" -gt 0 ] && echo yes || echo NO; }
 
 echo "# elixir_showcase — $BIN"
 echo "nodes=$(q 'SELECT COUNT(*) FROM nodes')  edges=$(q 'SELECT COUNT(*) FROM edges')"

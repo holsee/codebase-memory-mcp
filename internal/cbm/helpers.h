@@ -38,6 +38,27 @@ bool cbm_is_test_file(const char *rel_path, CBMLanguage lang);
 TSNode cbm_find_enclosing_func(TSNode node, CBMLanguage lang, const char *source);
 bool cbm_elixir_def_macro(const char *word);
 
+// Elixir name/arity identity (D3). All three read the tree-sitter-elixir AST
+// directly (the `arguments` field is not resolvable by name on Elixir `call`
+// nodes — child(1) is the args node), so callers must not rely on
+// CBMCall.arg_count (always 0 for Elixir).
+//
+// Def-head arity: `def_call` is a def `call` node (target = a def macro).
+// Returns the MAX arity (named param count of the head); writes the MIN arity
+// (max minus the count of `\\` default markers) to *min_out when non-NULL. A
+// bare-identifier head (`def foo`) or empty head (`def foo()`) is arity 0.
+int cbm_elixir_def_arity(TSNode def_call, const char *source, int *min_out);
+
+// Call-site arity for a `call` node: named-child count of its args, +1 when the
+// call is the right-hand side of a `|>` pipe. The trailing keyword list counts
+// as one argument (a single `keywords` named child).
+int cbm_elixir_call_arity(TSNode call_node, const char *source);
+
+// Capture literal arity. If `node` (a `/` binary_operator, or a callee node
+// whose parent is one) is part of a `&fun/N` / `&Mod.fun/N` capture, writes N
+// to *arity_out and returns true; otherwise returns false.
+bool cbm_elixir_capture_arity(TSNode node, const char *source, int *arity_out);
+
 // Get the QN of an enclosing function, or module_qn if none.
 const char *cbm_enclosing_func_qn(CBMArena *a, TSNode node, CBMLanguage lang, const char *source,
                                   const char *project, const char *rel_path, const char *module_qn);

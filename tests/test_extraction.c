@@ -1092,7 +1092,8 @@ TEST(elixir_call_under_control_flow) {
     ASSERT_FALSE(r->has_error);
     int saw = 0;
     for (int i = 0; i < r->calls.count; i++) {
-        if (strcmp(r->calls.items[i].callee_name, "handle") == 0) {
+        /* callee_name is arity-suffixed for Elixir (D3): `handle/1`. */
+        if (strcmp(r->calls.items[i].callee_name, "handle/1") == 0) {
             saw = 1;
             ASSERT_NOT_NULL(r->calls.items[i].enclosing_func_qn);
             ASSERT(strstr(r->calls.items[i].enclosing_func_qn, "dispatch") != NULL);

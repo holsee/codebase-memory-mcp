@@ -769,6 +769,160 @@ bool cbm_elixir_def_macro(const char *word) {
     return false;
 }
 
+// The arguments node of an Elixir `call` (field "arguments" is not resolvable
+// by name on Elixir call nodes, so fall back to child(1)).
+static TSNode elixir_args_of(TSNode call) {
+    TSNode a = ts_node_child_by_field_name(call, "arguments", 9);
+    if (ts_node_is_null(a) && ts_node_child_count(call) > 1) {
+        a = ts_node_child(call, 1);
+    }
+    return a;
+}
+
+// True when the binary_operator `n`'s operator field text is exactly `op`.
+static bool elixir_operator_is(TSNode n, const char *source, const char *op) {
+    if (!source || ts_node_is_null(n) || strcmp(ts_node_type(n), "binary_operator") != 0) {
+        return false;
+    }
+    TSNode o = ts_node_child_by_field_name(n, "operator", 8);
+    if (ts_node_is_null(o)) {
+        return false;
+    }
+    uint32_t s = ts_node_start_byte(o), e = ts_node_end_byte(o);
+    size_t len = strlen(op);
+    return (e - s) == len && memcmp(source + s, op, len) == 0;
+}
+
+int cbm_elixir_def_arity(TSNode def_call, const char *source, int *min_out) {
+    if (min_out) {
+        *min_out = 0;
+    }
+    TSNode args = elixir_args_of(def_call);
+    if (ts_node_is_null(args) || ts_node_child_count(args) == 0) {
+        return 0;
+    }
+    TSNode head = ts_node_child(args, 0);
+    if (ts_node_is_null(head)) {
+        return 0;
+    }
+    const char *hk = ts_node_type(head);
+    // Guarded head `def foo(x) when g` → binary_operator(left: head, when, guard).
+    if (strcmp(hk, "binary_operator") == 0) {
+        TSNode left = ts_node_child_by_field_name(head, "left", 4);
+        if (!ts_node_is_null(left)) {
+            head = left;
+            hk = ts_node_type(head);
+        }
+    }
+    if (strcmp(hk, "identifier") == 0) {
+        return 0; // bare `def foo` — zero-arity
+    }
+    if (strcmp(hk, "call") != 0) {
+        return 0;
+    }
+    TSNode params = elixir_args_of(head);
+    if (ts_node_is_null(params)) {
+        return 0;
+    }
+    int max = (int)ts_node_named_child_count(params);
+    int defaults = 0;
+    for (uint32_t i = 0; i < ts_node_named_child_count(params); i++) {
+        TSNode p = ts_node_named_child(params, i);
+        // A default `a \\ 1` is a binary_operator with operator "\\"; a match
+        // `%{} = m` uses "=" and must NOT count as a default.
+        if (elixir_operator_is(p, source, "\\\\")) {
+            defaults++;
+        }
+    }
+    if (min_out) {
+        *min_out = max - defaults;
+    }
+    return max;
+}
+
+int cbm_elixir_call_arity(TSNode call_node, const char *source) {
+    int arity = 0;
+    TSNode args = elixir_args_of(call_node);
+    if (!ts_node_is_null(args)) {
+        arity = (int)ts_node_named_child_count(args);
+    }
+    // Pipe: `x |> foo(y)` gives foo one extra (piped) argument.
+    TSNode p = ts_node_parent(call_node);
+    if (elixir_operator_is(p, source, "|>")) {
+        TSNode right = ts_node_child_by_field_name(p, "right", 5);
+        if (!ts_node_is_null(right) && ts_node_eq(right, call_node)) {
+            arity += 1;
+        }
+    }
+    return arity;
+}
+
+bool cbm_elixir_capture_arity(TSNode node, const char *source, int *arity_out) {
+    if (!source) {
+        return false;
+    }
+    TSNode bin;
+    memset(&bin, 0, sizeof(bin));
+    bool have = false;
+    // &fun/N : `node` itself is the `/` binary_operator.
+    if (elixir_operator_is(node, source, "/")) {
+        bin = node;
+        have = true;
+    }
+    // &Mod.fun/N : `node` (the Mod.fun call) is the left of a `/` binary_operator.
+    if (!have) {
+        TSNode par = ts_node_parent(node);
+        if (elixir_operator_is(par, source, "/")) {
+            TSNode left = ts_node_child_by_field_name(par, "left", 4);
+            if (!ts_node_is_null(left) && ts_node_eq(left, node)) {
+                bin = par;
+                have = true;
+            }
+        }
+    }
+    if (!have) {
+        return false;
+    }
+    TSNode right = ts_node_child_by_field_name(bin, "right", 5);
+    if (ts_node_is_null(right) || strcmp(ts_node_type(right), "integer") != 0) {
+        return false;
+    }
+    // The `/` must sit under a `&` capture (unary_operator), a few levels up.
+    bool amp = false;
+    int hops = 0;
+    for (TSNode a = ts_node_parent(bin); !ts_node_is_null(a) && hops < 4;
+         a = ts_node_parent(a), hops++) {
+        const char *ak = ts_node_type(a);
+        if (strcmp(ak, "unary_operator") == 0) {
+            TSNode o = ts_node_child_by_field_name(a, "operator", 8);
+            if (!ts_node_is_null(o)) {
+                uint32_t s = ts_node_start_byte(o);
+                if (ts_node_end_byte(o) > s && source[s] == '&') {
+                    amp = true;
+                }
+            }
+            break;
+        }
+        if (strcmp(ak, "call") == 0 || strcmp(ak, "do_block") == 0) {
+            break;
+        }
+    }
+    if (!amp) {
+        return false;
+    }
+    if (arity_out) {
+        int n = 0;
+        for (uint32_t i = ts_node_start_byte(right); i < ts_node_end_byte(right); i++) {
+            if (source[i] < '0' || source[i] > '9') {
+                break;
+            }
+            n = n * 10 + (source[i] - '0');
+        }
+        *arity_out = n;
+    }
+    return true;
+}
+
 // Elixir: every `call` node matches func_kinds_elixir, but only def-like
 // calls are definitions — verify the target keyword so an `if`/`case`/pipe
 // ancestor (also `call` nodes) is not mistaken for the enclosing function.

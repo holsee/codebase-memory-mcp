@@ -4569,16 +4569,30 @@ static void extract_elixir_func_def(CBMExtractCtx *ctx, TSNode node, const char 
         return;
     }
 
-    CBMDefinition def;
-    memset(&def, 0, sizeof(def));
-    def.name = name;
-    def.qualified_name = cbm_fqn_compute(a, ctx->project, ctx->rel_path, name);
-    def.label = "Function";
-    def.file_path = ctx->rel_path;
-    def.start_line = ts_node_start_point(node).row + TS_LINE_OFFSET;
-    def.end_line = ts_node_end_point(node).row + TS_LINE_OFFSET;
-    def.is_exported = !elixir_def_is_private(macro);
-    cbm_defs_push(&ctx->result->defs, a, def);
+    // Name/arity identity (D3): the def QN is `<module_qn>.<name>/<arity>`, so
+    // foo/1 and foo/2 are distinct nodes. Default args fan out across min..max
+    // (min = arity − count of `\\` defaults): `def foo(a, b \\ 1)` defines both
+    // foo/1 and foo/2. The display `name` stays bare (search_graph name_pattern,
+    // UI); arity lives only in `qualified_name`. Same-arity clauses collapse to
+    // one node via UNIQUE(project, qualified_name). All Elixir-gated.
+    const char *base_qn = cbm_fqn_compute(a, ctx->project, ctx->rel_path, name);
+    int min_arity = 0;
+    int max_arity = cbm_elixir_def_arity(node, ctx->source, &min_arity);
+    if (min_arity < 0) {
+        min_arity = 0;
+    }
+    for (int arity = min_arity; arity <= max_arity; arity++) {
+        CBMDefinition def;
+        memset(&def, 0, sizeof(def));
+        def.name = name;
+        def.qualified_name = cbm_arena_sprintf(a, "%s/%d", base_qn, arity);
+        def.label = "Function";
+        def.file_path = ctx->rel_path;
+        def.start_line = ts_node_start_point(node).row + TS_LINE_OFFSET;
+        def.end_line = ts_node_end_point(node).row + TS_LINE_OFFSET;
+        def.is_exported = !elixir_def_is_private(macro);
+        cbm_defs_push(&ctx->result->defs, a, def);
+    }
 }
 
 // Emit Class definition for an Elixir defmodule node. Returns do_block or null.
