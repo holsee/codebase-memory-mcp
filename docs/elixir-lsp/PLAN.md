@@ -518,7 +518,7 @@ other languages). `scripts/test.sh` full suite is the per-PR guard.
 | PR-1b scopes/aliases/imports resolution | `d7da0ca7` | ☑ 2026-07-24 |
 | PR-1c name/arity identity (D3) + pipes/captures/defaults | `79ebbc7d` | ☑ 2026-07-24 |
 | Checkpoint C1.5 recorded (`testing/AFTER-PHASE-1.md`) | — | ☑ 2026-07-24 |
-| PR-2a stdlib seed | | ☐ |
+| PR-2a stdlib seed | `dde6f85f` | ☑ 2026-07-24 |
 | PR-2b cross-file fallback tier | | ☐ |
 | PR-2c use-table + behaviours + protocols | | ☐ |
 | Checkpoint C2 recorded (`testing/AFTER-PHASE-2.md`) | — | ☐ |
@@ -698,6 +698,19 @@ other languages). `scripts/test.sh` full suite is the per-PR guard.
   edge to a 4-call `trace_path` with native arity. Non-Elixir control (graph-ui
   TS, 45 files): Phase-0-tip and Phase-1 binaries produce **byte-identical**
   graphs (338 nodes / 764 edges) — Phase 1 confirmed Elixir-scoped.
+- 2026-07-24 — PR-2a landed (`dde6f85f`). Curated stdlib seed:
+  `elixir_stdlib_data.c` expanded to ~150 arity-keyed entries (Kernel +
+  Enum/Map/String/List/Keyword/Process/GenServer/Supervisor/Task/Agent), plus
+  two resolver rungs — a Kernel fallback for bare calls (`lsp_ex_kernel`) and a
+  curated-module rung for qualified calls (`lsp_ex_stdlib`), both arity-precise
+  (`GenServer.call/2` vs `/3`). **Scope decision:** the seed is *knowledge*, not
+  graph nodes — a resolved stdlib call carries the strategy in `resolved_calls`
+  but forms no CALLS *edge* (stdlib modules aren't indexed; edges need an
+  existing node). Minting stdlib nodes (à la `kotlin_builtins.c`) would inflate
+  every project's node count and break the label goldens, so it's deliberately
+  deferred/opt-in; the real Phase-2 graph win is cross-file resolution to
+  existing project nodes (PR-2b). Matches the Perl precedent (stdlib classifies,
+  doesn't create edges). 3 new tests; full suite 6643/0.
 - 2026-07-24 — Test-coverage audit + backfill. Found three added code paths
   with no test exercising them: PR-0d's multi-alias `Foo.{Bar, Baz}` expansion
   and `alias X, as: Y` handling (the grammar_imports fixture used only plain
