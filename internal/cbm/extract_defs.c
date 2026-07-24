@@ -4625,6 +4625,102 @@ static const char *elixir_enclosing_module_prefix(CBMExtractCtx *ctx, TSNode nod
     return chain;
 }
 
+// Scan a defmodule's do_block (direct statements) for `use X` / `@behaviour X`
+// naming a CURATED behaviour (cbm_elixir_known_behaviour). Returns an arena,
+// NULL-terminated name array, or NULL when none found. Phase 2.7b.
+static const char **elixir_module_behaviours(CBMExtractCtx *ctx, TSNode do_block) {
+    if (ts_node_is_null(do_block)) {
+        return NULL;
+    }
+    CBMArena *a = ctx->arena;
+    const char *found[8];
+    int nfound = 0;
+    uint32_t n = ts_node_named_child_count(do_block);
+    for (uint32_t i = 0; i < n && nfound < 8; i++) {
+        TSNode c = ts_node_named_child(do_block, i);
+        if (ts_node_is_null(c)) {
+            continue;
+        }
+        const char *ck = ts_node_type(c);
+        char *bname = NULL;
+        if (strcmp(ck, "call") == 0 && ts_node_child_count(c) > 0) {
+            char *kw = cbm_node_text(a, ts_node_child(c, 0), ctx->source);
+            if (kw && strcmp(kw, "use") == 0) {
+                TSNode uargs = elixir_call_args(c);
+                if (!ts_node_is_null(uargs) && ts_node_child_count(uargs) > 0) {
+                    bname = cbm_node_text(a, ts_node_child(uargs, 0), ctx->source);
+                }
+            }
+        } else if (strcmp(ck, "unary_operator") == 0) {
+            // `@behaviour GenServer` — text-parse the attribute form.
+            char *txt = cbm_node_text(a, c, ctx->source);
+            if (txt && strncmp(txt, "@behaviour ", 11) == 0) {
+                bname = txt + 11;
+                while (*bname == ' ') {
+                    bname++;
+                }
+            }
+        }
+        if (!bname || !cbm_elixir_known_behaviour(bname)) {
+            continue;
+        }
+        bool dup = false;
+        for (int k = 0; k < nfound; k++) {
+            if (strcmp(found[k], bname) == 0) {
+                dup = true;
+                break;
+            }
+        }
+        if (!dup) {
+            found[nfound++] = bname;
+        }
+    }
+    if (nfound == 0) {
+        return NULL;
+    }
+    const char **out = (const char **)cbm_arena_alloc(a, (size_t)(nfound + 1) * sizeof(char *));
+    if (!out) {
+        return NULL;
+    }
+    for (int k = 0; k < nfound; k++) {
+        out[k] = found[k];
+    }
+    out[nfound] = NULL;
+    return out;
+}
+
+// Inject a synthetic behaviour Class node + its curated callback identities so
+// INHERITS (module -> behaviour) and OVERRIDE (callback def -> behaviour
+// callback) edges have real targets. Injection is CONDITIONAL — only when a
+// module actually uses/declares the behaviour — so graphs without behaviours
+// are byte-identical. Upsert-by-QN collapses repeats across files. Phase 2.7b.
+static void elixir_inject_behaviour_defs(CBMExtractCtx *ctx, const char *behaviour) {
+    CBMArena *a = ctx->arena;
+    CBMDefinition bd;
+    memset(&bd, 0, sizeof(bd));
+    bd.name = behaviour;
+    bd.qualified_name = behaviour;
+    bd.label = "Class";
+    bd.file_path = "<elixir-behaviours>";
+    bd.start_line = 1;
+    bd.end_line = 1;
+    bd.is_exported = true;
+    cbm_defs_push(&ctx->result->defs, a, bd);
+    const CBMElixirCallback *cbs = cbm_elixir_behaviour_callbacks(behaviour);
+    for (const CBMElixirCallback *cb = cbs; cb && cb->name; cb++) {
+        CBMDefinition cd;
+        memset(&cd, 0, sizeof(cd));
+        cd.name = cb->name;
+        cd.qualified_name = cbm_arena_sprintf(a, "%s.%s/%d", behaviour, cb->name, cb->arity);
+        cd.label = "Function";
+        cd.file_path = "<elixir-behaviours>";
+        cd.start_line = 1;
+        cd.end_line = 1;
+        cd.is_exported = true;
+        cbm_defs_push(&ctx->result->defs, a, cd);
+    }
+}
+
 static TSNode emit_elixir_module_class(CBMExtractCtx *ctx, TSNode cur) {
     CBMArena *a = ctx->arena;
     TSNode null_node = {0};
@@ -4644,6 +4740,7 @@ static TSNode emit_elixir_module_class(CBMExtractCtx *ctx, TSNode cur) {
     if (prefix) {
         name = cbm_arena_sprintf(a, "%s.%s", prefix, name);
     }
+    TSNode do_block = cbm_find_child_by_kind(cur, "do_block");
     CBMDefinition def;
     memset(&def, 0, sizeof(def));
     def.name = name;
@@ -4653,8 +4750,18 @@ static TSNode emit_elixir_module_class(CBMExtractCtx *ctx, TSNode cur) {
     def.start_line = ts_node_start_point(cur).row + TS_LINE_OFFSET;
     def.end_line = ts_node_end_point(cur).row + TS_LINE_OFFSET;
     def.is_exported = true;
+    // Behaviours (Phase 2.7b): `use GenServer` / `@behaviour GenServer` become
+    // base_classes (-> INHERITS to the injected behaviour Class); the semantic
+    // pass then links callback defs with OVERRIDE edges.
+    const char **behaviours = elixir_module_behaviours(ctx, do_block);
+    if (behaviours) {
+        def.base_classes = behaviours;
+        for (const char **b = behaviours; *b; b++) {
+            elixir_inject_behaviour_defs(ctx, *b);
+        }
+    }
     cbm_defs_push(&ctx->result->defs, a, def);
-    return cbm_find_child_by_kind(cur, "do_block");
+    return do_block;
 }
 
 // Emit Class for `defimpl Protocol, for: Target` under the conventional

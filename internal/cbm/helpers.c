@@ -923,6 +923,56 @@ bool cbm_elixir_capture_arity(TSNode node, const char *source, int *arity_out) {
     return true;
 }
 
+// Curated Elixir behaviours + their callback identities (Phase 2.7b). Kept
+// deliberately small: the dominant OTP + Phoenix behaviours whose callbacks
+// are near-universal in real codebases. Expansion is data-only.
+typedef struct {
+    const char *behaviour;
+    const CBMElixirCallback *callbacks;
+} ElixirBehaviourEntry;
+
+static const CBMElixirCallback kGenServerCallbacks[] = {{"init", 1},
+                                                        {"handle_call", 3},
+                                                        {"handle_cast", 2},
+                                                        {"handle_info", 2},
+                                                        {"handle_continue", 2},
+                                                        {"terminate", 2},
+                                                        {"code_change", 3},
+                                                        {NULL, 0}};
+static const CBMElixirCallback kSupervisorCallbacks[] = {{"init", 1}, {NULL, 0}};
+static const CBMElixirCallback kApplicationCallbacks[] = {
+    {"start", 2}, {"stop", 1}, {"config_change", 3}, {NULL, 0}};
+static const CBMElixirCallback kLiveViewCallbacks[] = {
+    {"mount", 3},     {"render", 1}, {"handle_event", 3}, {"handle_params", 3}, {"handle_info", 2},
+    {"terminate", 2}, {NULL, 0}};
+static const CBMElixirCallback kChannelCallbacks[] = {
+    {"join", 3}, {"handle_in", 3}, {"handle_out", 3}, {"terminate", 2}, {NULL, 0}};
+static const CBMElixirCallback kPlugCallbacks[] = {{"init", 1}, {"call", 2}, {NULL, 0}};
+
+static const ElixirBehaviourEntry kElixirBehaviours[] = {{"GenServer", kGenServerCallbacks},
+                                                         {"Supervisor", kSupervisorCallbacks},
+                                                         {"Application", kApplicationCallbacks},
+                                                         {"Phoenix.LiveView", kLiveViewCallbacks},
+                                                         {"Phoenix.Channel", kChannelCallbacks},
+                                                         {"Plug", kPlugCallbacks},
+                                                         {NULL, NULL}};
+
+bool cbm_elixir_known_behaviour(const char *name) {
+    return cbm_elixir_behaviour_callbacks(name) != NULL;
+}
+
+const CBMElixirCallback *cbm_elixir_behaviour_callbacks(const char *behaviour) {
+    if (!behaviour) {
+        return NULL;
+    }
+    for (const ElixirBehaviourEntry *e = kElixirBehaviours; e->behaviour; e++) {
+        if (strcmp(e->behaviour, behaviour) == 0) {
+            return e->callbacks;
+        }
+    }
+    return NULL;
+}
+
 // Elixir: every `call` node matches func_kinds_elixir, but only def-like
 // calls are definitions — verify the target keyword so an `if`/`case`/pipe
 // ancestor (also `call` nodes) is not mistaken for the enclosing function.

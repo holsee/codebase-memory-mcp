@@ -713,6 +713,45 @@ TEST(elixirlsp_delegate_stdlib) {
     PASS();
 }
 
+/* `use GenServer` injects the behaviour Class + callback identity defs
+ * (conditional — only when a behaviour is actually used). Phase 2.7b. */
+TEST(elixirlsp_behaviour_injection) {
+    const char *src = "defmodule S do\n"
+                      "  use GenServer\n"
+                      "  def init(a), do: {:ok, a}\n"
+                      "end\n";
+    CBMFileResult *r = extract_elixir(src);
+    ASSERT(r);
+    int saw_class = 0;
+    int saw_cb = 0;
+    for (int i = 0; i < r->defs.count; i++) {
+        const CBMDefinition *d = &r->defs.items[i];
+        if (!d->qualified_name)
+            continue;
+        if (strcmp(d->qualified_name, "GenServer") == 0)
+            saw_class = 1;
+        if (strcmp(d->qualified_name, "GenServer.handle_call/3") == 0)
+            saw_cb = 1;
+    }
+    ASSERT(saw_class);
+    ASSERT(saw_cb);
+    cbm_free_result(r);
+    PASS();
+}
+
+/* A module with no behaviour injects nothing (graphs stay byte-identical). */
+TEST(elixirlsp_no_behaviour_no_injection) {
+    const char *src = "defmodule P do\n  def go, do: :ok\nend\n";
+    CBMFileResult *r = extract_elixir(src);
+    ASSERT(r);
+    for (int i = 0; i < r->defs.count; i++) {
+        const CBMDefinition *d = &r->defs.items[i];
+        ASSERT(!d->file_path || strcmp(d->file_path, "<elixir-behaviours>") != 0);
+    }
+    cbm_free_result(r);
+    PASS();
+}
+
 /* A resolver run over an empty module emits nothing and does not crash. */
 TEST(elixirlsp_empty_module) {
     const char *src = "defmodule Empty do\nend\n";
@@ -755,6 +794,8 @@ SUITE(elixir_lsp) {
     RUN_TEST(elixirlsp_delegate_samefile);
     RUN_TEST(elixirlsp_delegate_cross);
     RUN_TEST(elixirlsp_delegate_stdlib);
+    RUN_TEST(elixirlsp_behaviour_injection);
+    RUN_TEST(elixirlsp_no_behaviour_no_injection);
     RUN_TEST(elixirlsp_import_only_atom_form);
     RUN_TEST(elixirlsp_import_only_stdlib);
     RUN_TEST(elixirlsp_import_only_arity_mismatch);

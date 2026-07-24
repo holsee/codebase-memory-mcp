@@ -3017,6 +3017,7 @@ int cbm_parallel_resolve(cbm_pipeline_ctx_t *ctx, const cbm_file_info_t *files, 
 
     /* Go-style implicit interface satisfaction (needs full graph, serial) */
     int go_impl = cbm_pipeline_implements_go(ctx);
+    go_impl += cbm_pipeline_behaviours_elixir(ctx);
 
     if (atomic_load(ctx->cancelled)) {
         return CBM_NOT_FOUND;
