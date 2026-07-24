@@ -606,13 +606,18 @@ other languages). `scripts/test.sh` full suite is the per-PR guard.
   grammar layer (the walk is module-level by design); not needed for call
   resolution. **Phase 0 (D1–D8) complete** — next is checkpoint C1.
 - 2026-07-24 — Checkpoint C1 recorded (`testing/AFTER-PHASE-0.md`).
-  Objective (B → C1): IMPORTS 40→92 / 82→223 / 500→2064; Function-sourced
-  CALLS 56→68 % / 70→76 % / 60→63 %; Functions +37/+94/+107; index time flat.
-  Rubric 17/17 PASS under the stricter MCP-only runner (baseline reached 17/17
-  partly via text fallback the C1 runner forbids) — graph-gap signals 3→1
-  questions; E1 went from a 7-tool `grep` cascade to 4 clean graph tools.
-  Non-Elixir control (graph-ui TS, 46 files): baseline and C1 binaries produce
-  byte-identical graphs (338 nodes/764 edges) — Phase 0 confirmed Elixir-scoped.
+  Objective (B → C1): Function-sourced CALLS 56→68 % / 70→76 % / 60→63 %;
+  Functions +37/+94/+107; index time flat. Rubric 17/17 PASS under the stricter
+  MCP-only runner (baseline reached 17/17 partly via text fallback the C1 runner
+  forbids) — graph-gap signals 3→1 questions; E1 went from a 7-tool `grep`
+  cascade to 4 clean graph tools. Non-Elixir control (graph-ui TS, 46 files):
+  baseline and C1 binaries produce byte-identical graphs (338 nodes/764 edges) —
+  Phase 0 confirmed Elixir-scoped. **Correction:** the IMPORTS *edge* count
+  (40→92 etc.) was demoted from headline — the pinned corpus showed Elixir
+  import→node resolution is fuzzy (all plug IMPORTS collapse to the root `Plug`
+  module; the showcase resolves 0 from correct in-repo imports). PR-0d's real
+  win is import *extraction* (unit-tested); accurate cross-module resolution is
+  a newly-tracked Phase 2 target.
 - 2026-07-24 — Test-coverage audit + backfill. Found three added code paths
   with no test exercising them: PR-0d's multi-alias `Foo.{Bar, Baz}` expansion
   and `alias X, as: Y` handling (the grammar_imports fixture used only plain
@@ -635,3 +640,4 @@ other languages). `scripts/test.sh` full suite is the per-PR guard.
 | Corpus rubric is partly subjective | Blind grading, frozen question key, 3-attempt cap, objective M1–M5 carry the primary claim |
 | Index-time regression from cross-file pass | M5 gate ≤ +15 %; Tier-2 registry as the escape hatch |
 | Originality scan flags resolver code | Clean-room discipline: design-notes-first, no source open while writing; scan locally before each resolver PR |
+| **Fuzzy Elixir import→node resolution** (surfaced by the corpus at C1): dotted module imports collapse to the app root module or resolve to nothing — `cbm_pipeline_resolve_import_node` doesn't map `Mod.Sub` to its declaring module node | Phase 2: resolve `alias`/`import` targets via the resolver's module registry (the same alias map the CALLS resolver builds), keyed by module QN; the `elixir_showcase` corpus (0 IMPORTS edges from correct in-repo imports) is the acceptance oracle |

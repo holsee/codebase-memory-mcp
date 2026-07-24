@@ -29,8 +29,20 @@ captured defs/imports. **Perf guard satisfied.**
 
 **Reading the results**
 
-- **M3 (imports)** is the headline: nested `import/alias/require/use` inside
-  `defmodule` blocks are now captured (PR-0d). Analytics 500 → 2,064 (4.1×).
+- **M3 (imports) — corrected, read carefully.** PR-0d's real win is import
+  *extraction*: nested `import/alias/require/use` are now parsed (proven by
+  `test_grammar_imports.c` and the `elixir_alias_forms` unit test). The IMPORTS
+  *edge* count rising (40→92 plug, 500→2,064 analytics) looks dramatic but
+  **overstates graph value**: the pinned corpus exposed that Elixir import→node
+  resolution is *fuzzy* — all 92 of plug's IMPORTS edges resolve to the single
+  top-level `Plug` module, not the actually-imported modules (`Plug.Conn`,
+  `Plug.Builder`, …). The showcase, which has no bare root module for the
+  resolver to collapse onto, produces **0** IMPORTS edges from correctly-extracted
+  in-repo imports. So the edge-count delta reflects *more imports fed to a
+  fuzzy resolver*, not accurate import edges. Accurate cross-module import
+  resolution is Phase 2 (the Hybrid LSP resolver) — see "What the corpus
+  surfaced" below. Treat import *extraction* as the Phase-0 deliverable, not the
+  IMPORTS edge count.
 - **M2 (call attribution)** rose everywhere — guarded-def bodies now source to
   the enclosing function, not the module (PR-0b). The remaining module-sourced
   fraction is expected: module-level calls, macros, and calls whose enclosing
@@ -122,11 +134,40 @@ corpus's directives target stdlib/undefined modules, and edge formation needs a
 resolved in-repo target (Phase 2) — import *extraction* is covered by
 `test_grammar_imports.c` and the external plug numbers.
 
+## What the corpus surfaced (findings, not regressions)
+
+Building the pinned corpus did its job — it exposed two things the large-repo
+metrics had hidden:
+
+1. **Elixir import resolution is fuzzy (pre-existing; Phase 0 exposed it).**
+   `cbm_pipeline_resolve_import_node` (path-based Strategy 1 + namespace-map
+   Strategy 2) does not resolve dotted Elixir module names to their declaring
+   module node; on plug every import collapses to the root `Plug` node, and on
+   the showcase (no root module) nothing resolves. PR-0d did not cause this —
+   it only feeds the resolver more (correctly-extracted) imports, making the
+   gap visible. This is squarely Phase 2 (cross-module resolution) work; it is
+   now a tracked target for the resolver, with the showcase as its oracle.
+
+2. **A reporting overclaim in this document (now corrected).** The first draft
+   led with "IMPORTS 40→92 / 500→2064" as a headline Phase-0 win. The count is
+   real but the edges are mostly mis-resolved (see M3 above). The defensible
+   Phase-0 claims are the *node-level* ones — guarded/def-like Function nodes,
+   nested-module QNs, protocol/impl Classes, call-attribution share — all of
+   which the corpus confirms 7/8 → 8/8 and which the unit tests gate. Import
+   *edge* count has been demoted from headline to caveat.
+
+Neither is a defect in the PR-0a…0e extraction code (unit tests pass; the
+node-existence corpus checks are 8/8). Both are exactly what a controlled
+before/after oracle is supposed to catch.
+
 ## Checkpoint C1 verdict
 
-Phase 0 delivered measured structural gains — imports up to 4.1×, call
-attribution up across all repos, guard/def-like/protocol forms now extracted —
-at flat index cost and zero collateral impact on other languages. The rubric
-saturates at the answer level (agentic client), so the honest evidence is the
-objective metrics M1–M4 and the shrinking fallback cascades. The headline
+Phase 0 delivered measured structural gains — guard/def-like/protocol forms now
+extracted (corpus 7/8 → 8/8), nested-module QNs joined, call attribution up
+across all repos, import *extraction* fixed — at flat index cost and zero
+collateral impact on other languages. Two caveats the corpus forced into the
+open: the IMPORTS *edge* count rise overstated value (fuzzy resolution — see
+above), and the rubric saturates at the answer level (agentic client). So the
+honest evidence is the *node-level* objective metrics and the shrinking fallback
+cascades, not edge-count deltas. The headline
 capability (arity-precise identity, cross-module resolution) is Phase 1–2.
