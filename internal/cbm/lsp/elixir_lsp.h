@@ -123,6 +123,10 @@ void cbm_run_elixir_lsp(CBMArena *arena, CBMFileResult *result, const char *sour
  * registry. PR-1a: Kernel stub only; Phase 2a populates the full seed. */
 void cbm_elixir_stdlib_register(CBMTypeRegistry *reg, CBMArena *arena);
 
+/* Opt-in (CBM_ELIXIR_STDLIB_NODES): inject the curated stdlib entries as graph
+ * nodes so stdlib classifications form real CALLS edges. Phase 2.7c. */
+void cbm_elixir_stdlib_inject_defs(CBMFileResult *result, CBMArena *arena);
+
 /* --- Cross-file LSP resolution (Phase 2b) ---
  *
  * Stub-declared here so the fallback-tier wiring (pass_lsp_cross.c, mirroring
