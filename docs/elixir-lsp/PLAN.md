@@ -451,6 +451,71 @@ oracle (target 6/6), IMPORTS-edge accuracy before/after, the TS byte-identical
 control, and the false-edge fixture. Recorded in `testing/AFTER-PHASE-2.5.md`;
 Phase 3 (PR-3b) then documents these as the final shipped numbers.
 
+### Phase 2.6 — Precision pass (pre-promotion)
+
+> Added 2026-07-24 from the capability report (`REPORT.md` §4–5). Goal: after
+> this pass there is **no known systematic false-edge class** in the Elixir
+> graph.
+
+**PR-2.6a `fix(elixir-lsp): classify atom-module calls; selector atom forms`**
+(A1 + A2)
+- A1: an atom-module callee (`:ets.insert/2`) is never LSP-classified, so the
+  textual matcher can bind it to a same-named project function (verified).
+  Emit `lsp_ex_erlang` for atom-module callees and add it to the Phase-2.5c
+  suppression list. AC: atom-collision probe → 0 CALLS.
+- A2: `import Foo, only: :functions/:macros/:sigils` (atom, not keyword list)
+  currently admits nothing; treat as admit-all (registry lookup still
+  validates). AC: `import Enum, only: :functions` + bare `map(l, f)` resolves.
+
+**PR-2.6b `fix(elixir-lsp): suppress unknown-dep qualified calls`** (A3)
+- Cross-pass only (module map complete there): a qualified call to a
+  Capitalised module neither in the project map nor curated stdlib is a dep
+  call (`HTTPoison.get/1`) — classify `lsp_ex_external` → suppression, so it
+  cannot short-name-match a project function. Risk: macro-defined modules are
+  invisible to the map — the corpus edge **diff must be reviewed, not just
+  counted**, before landing. AC: dep-call fixture → 0 CALLS; reviewed diff.
+
+### Phase 2.7 — Capability pass (pre-promotion)
+
+**PR-2.7a `feat(elixir-lsp): __MODULE__ aliases + defdelegate edges`** (B5+B4)
+- B5: substitute the enclosing module chain for the `__MODULE__` prefix at
+  alias-record time (PASS 1 already threads `mod_chain`).
+- B4: on a `defdelegate` def, parse `to:`/`as:`, alias-expand, resolve through
+  the ladder, emit `lsp_ex_delegate` from delegator to target.
+
+**PR-2.7b `feat(elixir-lsp): behaviour/impl OVERRIDE linkage`** (B6)
+- Curated callback name/arity sets per behaviour; collect `@behaviour`
+  attributes (PASS 1; `use` already collected); inject the small callback node
+  set via `result->defs` (`kotlin_builtins.c` pattern) and emit OVERRIDE edges
+  for matching defs. Design check first: how OVERRIDE edges are emitted.
+
+**PR-2.7c `feat(elixir-lsp): opt-in stdlib nodes`** (B7)
+- `elixir_builtins.c` injecting the curated stdlib entries as nodes behind an
+  env flag (default OFF — byte-identical graphs); with the flag on,
+  stdlib/Kernel/use classifications form real CALLS edges.
+
+**PR-2.7d `feat(elixir): defstruct/defexception nodes`** (B8, deferred since
+PR-0a) — emit struct-shaped nodes so data shapes are navigable.
+
+**Checkpoint C2.7** — `testing/AFTER-PHASE-2.7.md`: M4 matrix with raw counts,
+false-edge fixtures (S9/S11/dep), OVERRIDE/delegate/struct capability checks,
+TS byte-identical control.
+
+### Future extensions (recorded, not scheduled)
+
+From `REPORT.md` §5, group C/D — for consideration after promotion:
+
+- **`.heex`/`.eex` template extraction** — *the most likely next*: embedded
+  Elixir islands (`<%= … %>`) parsed so template-made calls become visible.
+- Tier-2 shared cross-file registry (C9) — only at monorepo scale; M5 flat.
+- Kind-disambiguated QNs / multi-module-per-file collision (C10) — shared-code
+  QN scheme change; needs upstream design discussion first.
+- First-to-last multi-clause spans (C11) — cosmetic.
+- Protocol-impl fan-out (D13) — recommended against (violates
+  precision-over-recall) unless shipped as flagged exploratory edges.
+- `@spec` hints (D14) — plan non-goal unless metrics justify.
+- Ruby (D15) — a separate plan of this same shape.
+
 ### Phase 3 — Evaluation, promotion, documentation
 
 **PR-3a `test(elixir-lsp): QA hardening`** — pathological-input guards
@@ -612,6 +677,13 @@ other languages). `scripts/test.sh` full suite is the per-PR guard.
 | PR-2.5c external-call textual-fallback suppression | `3961fbec` | ☑ 2026-07-24 |
 | PR-2.5d IMPORTS-edge resolution to Class nodes (C1 register item) | `c59327f0` | ☑ 2026-07-24 |
 | Checkpoint C2.5 recorded (`testing/AFTER-PHASE-2.5.md`) | — | ☑ 2026-07-24 |
+| PR-2.6a atom-module classification + selector atom forms (A1+A2) | | ☐ |
+| PR-2.6b unknown-dep qualified suppression (A3) | | ☐ |
+| PR-2.7a `__MODULE__` aliases + defdelegate edges (B5+B4) | | ☐ |
+| PR-2.7b behaviour/impl OVERRIDE linkage (B6) | | ☐ |
+| PR-2.7c opt-in stdlib nodes (B7) | | ☐ |
+| PR-2.7d defstruct/defexception nodes (B8) | | ☐ |
+| Checkpoint C2.7 recorded (`testing/AFTER-PHASE-2.7.md`) | — | ☐ |
 | PR-3a QA hardening | | ☐ |
 | PR-3b docs + promotion + release matrix | | ☐ |
 
