@@ -247,6 +247,71 @@ static const ElixirStdEntry kElixirStdlib[] = {
     {"Agent", "update", 2},
     {"Agent", "cast", 2},
     {"Agent", "stop", 1},
+
+    /* ── use-injected framework functions (Phase 2c) ────────────────────
+     * Functions a `use Framework` macro injects into the module scope, so a
+     * bare call resolves via the local rung's use-table pass (lsp_ex_use),
+     * keyed on the framework module: lookup_symbol("Phoenix.Controller",
+     * "render/2"). */
+
+    /* use Phoenix.Controller */
+    {"Phoenix.Controller", "render", 2},
+    {"Phoenix.Controller", "render", 3},
+    {"Phoenix.Controller", "json", 2},
+    {"Phoenix.Controller", "text", 2},
+    {"Phoenix.Controller", "html", 2},
+    {"Phoenix.Controller", "redirect", 2},
+    {"Phoenix.Controller", "put_flash", 3},
+    {"Phoenix.Controller", "put_status", 2},
+    {"Phoenix.Controller", "put_view", 2},
+    {"Phoenix.Controller", "action_name", 1},
+
+    /* use Phoenix.LiveView / Phoenix.Component */
+    {"Phoenix.LiveView", "assign", 2},
+    {"Phoenix.LiveView", "assign", 3},
+    {"Phoenix.LiveView", "assign_new", 3},
+    {"Phoenix.LiveView", "push_navigate", 2},
+    {"Phoenix.LiveView", "push_patch", 2},
+    {"Phoenix.LiveView", "send_update", 2},
+    {"Phoenix.LiveView", "connected?", 1},
+    {"Phoenix.LiveView", "allow_upload", 3},
+    {"Phoenix.Component", "assign", 2},
+    {"Phoenix.Component", "assign", 3},
+
+    /* use Ecto.Schema */
+    {"Ecto.Schema", "field", 2},
+    {"Ecto.Schema", "field", 3},
+    {"Ecto.Schema", "belongs_to", 2},
+    {"Ecto.Schema", "belongs_to", 3},
+    {"Ecto.Schema", "has_many", 2},
+    {"Ecto.Schema", "has_many", 3},
+    {"Ecto.Schema", "has_one", 2},
+    {"Ecto.Schema", "has_one", 3},
+    {"Ecto.Schema", "many_to_many", 3},
+    {"Ecto.Schema", "embeds_one", 2},
+    {"Ecto.Schema", "embeds_one", 3},
+    {"Ecto.Schema", "embeds_many", 2},
+    {"Ecto.Schema", "embeds_many", 3},
+    {"Ecto.Schema", "timestamps", 0},
+    {"Ecto.Schema", "timestamps", 1},
+    {"Ecto.Schema", "schema", 2},
+
+    /* use ExUnit.Case (test/describe/setup + common assertions) */
+    {"ExUnit.Case", "test", 2},
+    {"ExUnit.Case", "test", 3},
+    {"ExUnit.Case", "describe", 2},
+    {"ExUnit.Case", "setup", 1},
+    {"ExUnit.Case", "setup_all", 1},
+    {"ExUnit.Case", "assert", 1},
+    {"ExUnit.Case", "assert", 2},
+    {"ExUnit.Case", "refute", 1},
+    {"ExUnit.Case", "assert_receive", 1},
+    {"ExUnit.Case", "assert_received", 1},
+
+    /* use GenServer / Supervisor — the callable the macro injects (callbacks
+     * like handle_call are user-defined defs, resolved elsewhere). */
+    {"GenServer", "child_spec", 1},
+    {"Supervisor", "child_spec", 1},
 };
 
 void cbm_elixir_stdlib_register(CBMTypeRegistry *reg, CBMArena *arena) {

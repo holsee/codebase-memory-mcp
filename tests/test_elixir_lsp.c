@@ -409,6 +409,62 @@ TEST(elixirlsp_cross_file_unknown_module) {
     PASS();
 }
 
+/* ── use-macro injection + protocol dispatch (PR-2c) ────────────── */
+
+/* A bare call to a function injected by `use Phoenix.Controller`, made inside an
+ * action function, resolves lsp_ex_use to the framework function. */
+TEST(elixirlsp_use_injected_function) {
+    const char *src = "defmodule MyController do\n"
+                      "  use Phoenix.Controller\n"
+                      "  def index(conn) do\n"
+                      "    render(conn, \"index.html\")\n"
+                      "  end\n"
+                      "end\n";
+    CBMFileResult *r = extract_elixir(src);
+    ASSERT(r);
+    ASSERT(find_resolved(r, "index", "Phoenix.Controller.render/2", "lsp_ex_use") != NULL);
+    cbm_free_result(r);
+    PASS();
+}
+
+/* Protocol dispatch: a call to `Protocol.fun(x)` resolves cross-file to the
+ * protocol's own def (the runtime impl is not statically known). Exercised via
+ * the cross resolver with protocol-shaped defs. */
+TEST(elixirlsp_protocol_dispatch_cross) {
+    const char *src = "defmodule Report do\n"
+                      "  def show(x), do: Showcase.Describable.describe(x)\n"
+                      "end\n";
+    CBMArena arena;
+    cbm_arena_init(&arena);
+    CBMResolvedCallArray out;
+    memset(&out, 0, sizeof(out));
+    CBMLSPDef defs[4];
+    memset(defs, 0, sizeof(defs));
+    /* The protocol module + its describe/1 def (describable.ex). */
+    defs[0].qualified_name = "test.describable.Showcase.Describable";
+    defs[0].short_name = "Showcase.Describable";
+    defs[0].label = "Class";
+    defs[0].def_module_qn = "test.describable";
+    defs[1].qualified_name = "test.describable.describe/1";
+    defs[1].short_name = "describe";
+    defs[1].label = "Function";
+    defs[1].def_module_qn = "test.describable";
+    /* The caller module. */
+    defs[2].qualified_name = "test.report.Report";
+    defs[2].short_name = "Report";
+    defs[2].label = "Class";
+    defs[2].def_module_qn = "test.report";
+    defs[3].qualified_name = "test.report.show/1";
+    defs[3].short_name = "show";
+    defs[3].label = "Function";
+    defs[3].def_module_qn = "test.report";
+    cbm_run_elixir_lsp_cross(&arena, src, (int)strlen(src), "test.report", defs, 4, NULL, NULL, 0,
+                             NULL, &out);
+    ASSERT(cross_find(&out, "test.describable.describe/1", "lsp_ex_cross") != NULL);
+    cbm_arena_destroy(&arena);
+    PASS();
+}
+
 /* A resolver run over an empty module emits nothing and does not crash. */
 TEST(elixirlsp_empty_module) {
     const char *src = "defmodule Empty do\nend\n";
@@ -440,5 +496,7 @@ SUITE(elixir_lsp) {
     RUN_TEST(elixirlsp_cross_file_basic);
     RUN_TEST(elixirlsp_cross_file_alias);
     RUN_TEST(elixirlsp_cross_file_unknown_module);
+    RUN_TEST(elixirlsp_use_injected_function);
+    RUN_TEST(elixirlsp_protocol_dispatch_cross);
     RUN_TEST(elixirlsp_empty_module);
 }
