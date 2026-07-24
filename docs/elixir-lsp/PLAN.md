@@ -680,7 +680,7 @@ other languages). `scripts/test.sh` full suite is the per-PR guard.
 | PR-2.6a atom-module classification + selector atom forms (A1+A2) | `cbd88b59` | ☑ 2026-07-24 |
 | PR-2.6b unknown-dep qualified suppression (A3) | `bc33315b` | ☑ 2026-07-24 |
 | PR-2.7a `__MODULE__` aliases + defdelegate edges (B5+B4) | `835a4e0b` | ☑ 2026-07-24 |
-| PR-2.7b behaviour/impl OVERRIDE linkage (B6) | | ☐ |
+| PR-2.7b behaviour/impl OVERRIDE linkage (B6) | `cc1bb5a1` | ☑ 2026-07-24 |
 | PR-2.7c opt-in stdlib nodes (B7) | | ☐ |
 | PR-2.7d defstruct/defexception nodes (B8) | | ☐ |
 | Checkpoint C2.7 recorded (`testing/AFTER-PHASE-2.7.md`) | — | ☐ |
