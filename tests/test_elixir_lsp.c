@@ -752,6 +752,33 @@ TEST(elixirlsp_no_behaviour_no_injection) {
     PASS();
 }
 
+/* Opt-in stdlib nodes (Phase 2.7c): with CBM_ELIXIR_STDLIB_NODES set, curated
+ * entries are injected as defs; without it, none are (default byte-identical). */
+TEST(elixirlsp_stdlib_nodes_opt_in) {
+    const char *src = "defmodule M do\n  def run(l), do: Enum.map(l, fn x -> x end)\nend\n";
+    setenv("CBM_ELIXIR_STDLIB_NODES", "1", 1);
+    CBMFileResult *r = extract_elixir(src);
+    unsetenv("CBM_ELIXIR_STDLIB_NODES");
+    ASSERT(r);
+    int saw = 0;
+    for (int i = 0; i < r->defs.count; i++) {
+        const CBMDefinition *d = &r->defs.items[i];
+        if (d->qualified_name && strcmp(d->qualified_name, "Enum.map/2") == 0)
+            saw = 1;
+    }
+    ASSERT(saw);
+    cbm_free_result(r);
+    /* Flag off: no stdlib defs injected. */
+    CBMFileResult *r2 = extract_elixir(src);
+    ASSERT(r2);
+    for (int i = 0; i < r2->defs.count; i++) {
+        const CBMDefinition *d = &r2->defs.items[i];
+        ASSERT(!d->file_path || strcmp(d->file_path, "<elixir-stdlib>") != 0);
+    }
+    cbm_free_result(r2);
+    PASS();
+}
+
 /* A resolver run over an empty module emits nothing and does not crash. */
 TEST(elixirlsp_empty_module) {
     const char *src = "defmodule Empty do\nend\n";
@@ -796,6 +823,7 @@ SUITE(elixir_lsp) {
     RUN_TEST(elixirlsp_delegate_stdlib);
     RUN_TEST(elixirlsp_behaviour_injection);
     RUN_TEST(elixirlsp_no_behaviour_no_injection);
+    RUN_TEST(elixirlsp_stdlib_nodes_opt_in);
     RUN_TEST(elixirlsp_import_only_atom_form);
     RUN_TEST(elixirlsp_import_only_stdlib);
     RUN_TEST(elixirlsp_import_only_arity_mismatch);

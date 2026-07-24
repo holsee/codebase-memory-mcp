@@ -334,3 +334,53 @@ void cbm_elixir_stdlib_register(CBMTypeRegistry *reg, CBMArena *arena) {
         cbm_registry_add_func(reg, rf);
     }
 }
+
+/* Opt-in stdlib node injection (Phase 2.7c). Behind CBM_ELIXIR_STDLIB_NODES
+ * (checked by the caller): inject every curated entry as a graph node — a
+ * Class per module and a Function per entry — with QNs identical to the
+ * resolver's emitted callee_qns ("Enum.map/2"), so lsp_ex_stdlib /
+ * lsp_ex_kernel / lsp_ex_use classifications resolve to real nodes and form
+ * CALLS edges. Default OFF: injection inflates every project's node count, so
+ * it is a deliberate opt-in (mirrors kotlin_builtins.c, which injects a tiny
+ * set unconditionally). Upsert-by-QN dedups across files. */
+void cbm_elixir_stdlib_inject_defs(CBMFileResult *result, CBMArena *arena) {
+    if (!result || !arena) {
+        return;
+    }
+    const int n = (int)(sizeof(kElixirStdlib) / sizeof(kElixirStdlib[0]));
+    const char *seen[64];
+    int nseen = 0;
+    for (int i = 0; i < n; i++) {
+        const ElixirStdEntry *e = &kElixirStdlib[i];
+        bool have = false;
+        for (int k = 0; k < nseen; k++) {
+            if (strcmp(seen[k], e->module) == 0) {
+                have = true;
+                break;
+            }
+        }
+        if (!have && nseen < 64) {
+            seen[nseen++] = e->module;
+            CBMDefinition md;
+            memset(&md, 0, sizeof(md));
+            md.name = e->module;
+            md.qualified_name = e->module;
+            md.label = "Class";
+            md.file_path = "<elixir-stdlib>";
+            md.start_line = 1;
+            md.end_line = 1;
+            md.is_exported = true;
+            cbm_defs_push(&result->defs, arena, md);
+        }
+        CBMDefinition fd;
+        memset(&fd, 0, sizeof(fd));
+        fd.name = e->fun;
+        fd.qualified_name = cbm_arena_sprintf(arena, "%s.%s/%d", e->module, e->fun, e->arity);
+        fd.label = "Function";
+        fd.file_path = "<elixir-stdlib>";
+        fd.start_line = 1;
+        fd.end_line = 1;
+        fd.is_exported = true;
+        cbm_defs_push(&result->defs, arena, fd);
+    }
+}

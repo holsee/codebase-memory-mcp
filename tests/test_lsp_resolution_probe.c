@@ -1805,6 +1805,27 @@ TEST(lrp_elixir_s9_stdlib_collision) {
     PASS();
 }
 
+/* S15 — Elixir opt-in stdlib CALLS edges (Phase 2.7c). With
+ * CBM_ELIXIR_STDLIB_NODES set, a call to Enum.map/2 forms a real CALLS edge to
+ * the injected stdlib node (0 without the flag — the classification alone has
+ * no target). */
+TEST(lrp_elixir_s15_stdlib_nodes_opt_in) {
+    static const LRP_File f[] = {
+        {"mx.ex", "defmodule Mx do\n  def run(l), do: Enum.map(l, fn x -> x end)\nend\n"}};
+    setenv("CBM_ELIXIR_STDLIB_NODES", "1", 1);
+    LRP_Proj lp;
+    cbm_store_t *store = lrp_index(&lp, f, 1);
+    unsetenv("CBM_ELIXIR_STDLIB_NODES");
+    int calls = store ? cbm_store_count_edges_by_type(store, lp.project, "CALLS") : -1;
+    if (calls < 1) {
+        fprintf(stderr, "  [LRP] elixir/S15/stdlib_nodes FAIL calls=%d expected >=1\n", calls);
+        lrp_diag(store, lp.project, "elixir/S15/stdlib_nodes");
+    }
+    lrp_cleanup(&lp, store);
+    ASSERT_TRUE(calls >= 1);
+    PASS();
+}
+
 /* S14 — Elixir behaviour linkage (Phase 2.7b). `use GenServer` gives the
  * module an INHERITS edge to the injected GenServer behaviour Class, and its
  * callback defs (init/1, handle_call/3) gain OVERRIDE edges to the behaviour's
@@ -2050,6 +2071,7 @@ SUITE(lsp_resolution_probe) {
     RUN_TEST(lrp_elixir_s12_dep_collision);
     RUN_TEST(lrp_elixir_s13_delegate_edge);
     RUN_TEST(lrp_elixir_s14_behaviour_override);
+    RUN_TEST(lrp_elixir_s15_stdlib_nodes_opt_in);
 
     /* ── USAGE-edge bonus probes ── */
     RUN_TEST(lrp_go_usage_struct_literal);

@@ -916,6 +916,15 @@ void cbm_run_elixir_lsp(CBMArena *arena, CBMFileResult *result, const char *sour
     /* Phase A: register stdlib (Kernel auto-imports + curated core modules). */
     cbm_elixir_stdlib_register(&reg, arena);
 
+    /* Opt-in stdlib nodes (Phase 2.7c): with CBM_ELIXIR_STDLIB_NODES set, the
+     * curated entries are minted as graph nodes so stdlib classifications form
+     * real CALLS edges ("what stdlib does X use?" becomes queryable). Default
+     * OFF — node-count inflation is a product decision, not a default. */
+    const char *stdnodes = getenv("CBM_ELIXIR_STDLIB_NODES");
+    if (stdnodes && stdnodes[0] && strcmp(stdnodes, "0") != 0) {
+        cbm_elixir_stdlib_inject_defs(result, arena);
+    }
+
     const char *module_qn = result->module_qn;
 
     /* Phase B: register file-local defs (label Function/Method). Return types
