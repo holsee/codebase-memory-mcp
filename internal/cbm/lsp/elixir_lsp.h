@@ -61,9 +61,17 @@ typedef struct {
     int defined_module_count;
     int defined_module_cap;
 
-    /* import map: import_module[i] is a module whose functions are imported
-     * into local scope (only:/except: selector resolution is Phase 2). */
-    const char **import_module;
+    /* import map (Phase 2.5b): one entry per `import M[, only:|except: [...]]`
+     * directive, module alias-expanded, selector parsed into (name, arity)
+     * pairs. Explicit imports shadow the Kernel auto-import in Elixir, so the
+     * local rung consults these before Kernel. */
+    struct ElixirImportDirective {
+        const char *module; /* dotted target module, alias-expanded */
+        int kind;           /* 0 = plain import, 1 = only:, 2 = except: */
+        const char **sel_names;
+        int *sel_arities;
+        int sel_count;
+    } *imports;
     int import_count;
     int import_cap;
 

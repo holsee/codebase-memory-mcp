@@ -37,10 +37,15 @@
  * is Phase 2b.
  *
  * Resolution ladder:
- *   - local `fun(args)`      → file-local def (lsp_ex_local), else Kernel
- *                              builtin (lsp_ex_kernel), else a function injected
- *                              by a `use Framework` the module pulled in
- *                              (Phoenix.Controller.render, …) → lsp_ex_use
+ *   - local `fun(args)`      → file-local def (lsp_ex_local); else a
+ *                              selector-admitted import — project module via
+ *                              the cross map (lsp_ex_import), stdlib module
+ *                              classifies (lsp_ex_stdlib) — explicit imports
+ *                              shadow Kernel; else Kernel builtin
+ *                              (lsp_ex_kernel); else a `use Framework` injected
+ *                              function (lsp_ex_use)
+ *   - capture `&fun/N`       → file-local def at the literal arity
+ *                              (lsp_ex_capture)
  *   - qualified `Mod.fun(a)` → Mod is a file-defined module or `__MODULE__`
  *                              → file-local def (lsp_ex_qualified);
  *                              else a module in another file → lsp_ex_cross
@@ -50,8 +55,7 @@
  * variable-module dispatch, `apply/3`, `unquote` — emits NO edge (Phase 2b or
  * genuinely dynamic). Name/arity identity (Phase 1c) suffixes every def QN and
  * lookup with `/arity` (pipes add +1, captures `&f/N` carry the literal), via
- * the shared cbm_elixir_*_arity helpers. Import only:/except: selector
- * resolution is Phase 2.
+ * the shared cbm_elixir_*_arity helpers.
  *
  * Zero-edge guarantee: an unresolvable callee emits NO edge (a false edge is
  * worse than a missing one).
@@ -78,6 +82,7 @@ extern const TSLanguage *tree_sitter_elixir(void);
 #define ELIXIR_CONF_CROSS 0.85f     /* cross-file project-module hit (Phase 2b) */
 #define ELIXIR_CONF_USE 0.85f       /* use-macro-injected framework function (Phase 2c) */
 #define ELIXIR_CONF_CAPTURE 0.90f   /* local capture &fun/N — arity is literal (Phase 2.5a) */
+#define ELIXIR_CONF_IMPORT 0.85f    /* selector-checked imported function (Phase 2.5b) */
 
 /* Maximum AST-walk recursion depth. Mirrors CBM_LSP_PERL_MAX_WALK_DEPTH: the
  * per-child recursion can stack-overflow on pathologically nested sources; past
@@ -250,6 +255,101 @@ static void elixir_add_str(ElixirLSPContext *ctx, const char ***arr, int *count,
     (*arr)[(*count)++] = cbm_arena_strdup(ctx->arena, s);
 }
 
+/* Collect (name, arity) selector pairs under an `only:`/`except:` value node
+ * (`[double: 1, foo: 2]` parses as list → keywords → pair(keyword, integer);
+ * the recursive walk tolerates either nesting). Bounded depth. */
+static void elixir_collect_sel_pairs(ElixirLSPContext *ctx, TSNode node,
+                                     struct ElixirImportDirective *imp, // NOLINT(misc-no-recursion)
+                                     int depth) {
+    if (ts_node_is_null(node) || depth > 4 || imp->sel_count >= 64)
+        return;
+    if (strcmp(ts_node_type(node), "pair") == 0 && ts_node_child_count(node) >= 2) {
+        char *key = elixir_node_text(ctx, ts_node_child(node, 0));
+        TSNode val = ts_node_child(node, ts_node_child_count(node) - 1);
+        if (key && key[0] && !ts_node_is_null(val) && strcmp(ts_node_type(val), "integer") == 0) {
+            /* Strip the keyword's trailing ':' ("double:" → "double"). */
+            char *colon = strchr(key, ':');
+            if (colon)
+                *colon = '\0';
+            char *aval = elixir_node_text(ctx, val);
+            if (imp->sel_count == 0) {
+                imp->sel_names = (const char **)cbm_arena_alloc(ctx->arena, 64 * sizeof(char *));
+                imp->sel_arities = (int *)cbm_arena_alloc(ctx->arena, 64 * sizeof(int));
+            }
+            if (imp->sel_names && imp->sel_arities && aval) {
+                imp->sel_names[imp->sel_count] = key;
+                imp->sel_arities[imp->sel_count] = atoi(aval);
+                imp->sel_count++;
+            }
+        }
+        return;
+    }
+    for (uint32_t i = 0; i < ts_node_named_child_count(node); i++)
+        elixir_collect_sel_pairs(ctx, ts_node_named_child(node, i), imp, depth + 1);
+}
+
+/* Record an `import M[, only:|except: [...]]` directive: module alias-expanded
+ * by the caller, selector keyword list parsed into (name, arity) pairs. */
+static void elixir_add_import(ElixirLSPContext *ctx, const char *module, TSNode args) {
+    if (!module || !module[0] || ctx->import_count >= 64)
+        return;
+    if (ctx->import_count >= ctx->import_cap) {
+        int nc = ctx->import_cap ? ctx->import_cap * 2 : 8;
+        struct ElixirImportDirective *ni =
+            (struct ElixirImportDirective *)cbm_arena_alloc(ctx->arena, (size_t)nc * sizeof(*ni));
+        if (!ni)
+            return;
+        for (int i = 0; i < ctx->import_count; i++)
+            ni[i] = ctx->imports[i];
+        ctx->imports = ni;
+        ctx->import_cap = nc;
+    }
+    struct ElixirImportDirective *imp = &ctx->imports[ctx->import_count];
+    memset(imp, 0, sizeof(*imp));
+    imp->module = cbm_arena_strdup(ctx->arena, module);
+    uint32_t ac = ts_node_child_count(args);
+    for (uint32_t i = 1; i < ac; i++) {
+        TSNode kw = ts_node_child(args, i);
+        if (ts_node_is_null(kw) || strcmp(ts_node_type(kw), "keywords") != 0)
+            continue;
+        uint32_t pc = ts_node_child_count(kw);
+        for (uint32_t j = 0; j < pc; j++) {
+            TSNode pair = ts_node_child(kw, j);
+            if (ts_node_is_null(pair) || ts_node_child_count(pair) < 2)
+                continue;
+            char *key = elixir_node_text(ctx, ts_node_child(pair, 0));
+            if (!key)
+                continue;
+            if (strncmp(key, "only", 4) == 0)
+                imp->kind = 1;
+            else if (strncmp(key, "except", 6) == 0)
+                imp->kind = 2;
+            else
+                continue;
+            elixir_collect_sel_pairs(ctx, ts_node_child(pair, ts_node_child_count(pair) - 1), imp,
+                                     0);
+        }
+    }
+    ctx->import_count++;
+}
+
+/* Does this import directive admit `fun/arity`? Plain import admits anything
+ * (the registry lookup validates existence); `only:` requires the pair listed;
+ * `except:` requires it absent. */
+static bool elixir_import_admits(const struct ElixirImportDirective *imp, const char *fun,
+                                 int arity) {
+    if (imp->kind == 0)
+        return true;
+    bool listed = false;
+    for (int i = 0; i < imp->sel_count; i++) {
+        if (imp->sel_arities[i] == arity && strcmp(imp->sel_names[i], fun) == 0) {
+            listed = true;
+            break;
+        }
+    }
+    return (imp->kind == 1) ? listed : !listed;
+}
+
 /* Record an `as: Alias` value among a directive's trailing keyword args. */
 static const char *elixir_find_as_alias(ElixirLSPContext *ctx, TSNode args) {
     uint32_t ac = ts_node_child_count(args);
@@ -341,8 +441,7 @@ static void elixir_scan_directives(ElixirLSPContext *ctx,
                         elixir_add_alias(ctx, as ? as : elixir_last_segment(ctx->arena, mtext),
                                          mtext, line);
                     } else if (strcmp(kw, "import") == 0) {
-                        elixir_add_str(ctx, &ctx->import_module, &ctx->import_count,
-                                       &ctx->import_cap, mtext);
+                        elixir_add_import(ctx, elixir_expand_alias(ctx, mtext, line), args);
                     } else if (strcmp(kw, "use") == 0) {
                         /* `use Framework` — record the (alias-expanded) target so
                          * the local rung can resolve calls to functions the macro
@@ -394,11 +493,47 @@ static int elixir_callsite_arity(ElixirLSPContext *ctx, TSNode node) {
 static void elixir_resolve_local(ElixirLSPContext *ctx, TSNode node, const char *fun) {
     if (!fun || !fun[0] || !ctx->module_qn)
         return;
-    const char *key = cbm_arena_sprintf(ctx->arena, "%s/%d", fun, elixir_callsite_arity(ctx, node));
+    int arity = elixir_callsite_arity(ctx, node);
+    const char *key = cbm_arena_sprintf(ctx->arena, "%s/%d", fun, arity);
     const CBMRegisteredFunc *f = cbm_registry_lookup_symbol(ctx->registry, ctx->module_qn, key);
     if (f && f->qualified_name) {
         elixir_emit(ctx, f->qualified_name, "lsp_ex_local", ELIXIR_CONF_LOCAL);
         return;
+    }
+    /* Imported functions (ladder rung (c), Phase 2.5b). Explicit imports shadow
+     * the Kernel auto-import in Elixir, so consult them before Kernel. A
+     * selector that does not admit fun/arity must not resolve; a directive that
+     * admits but has no matching def falls through to the next import. Project
+     * modules resolve through the cross map (cross pass); a module defined in
+     * this file resolves file-locally; curated stdlib modules classify. */
+    for (int i = 0; i < ctx->import_count; i++) {
+        const struct ElixirImportDirective *imp = &ctx->imports[i];
+        if (!elixir_import_admits(imp, fun, arity))
+            continue;
+        if (ctx->cross_module_map) {
+            const char *dmq =
+                (const char *)cbm_ht_get((CBMHashTable *)ctx->cross_module_map, imp->module);
+            if (dmq) {
+                const CBMRegisteredFunc *ci = cbm_registry_lookup_symbol(ctx->registry, dmq, key);
+                if (ci && ci->qualified_name) {
+                    elixir_emit(ctx, ci->qualified_name, "lsp_ex_import", ELIXIR_CONF_IMPORT);
+                    return;
+                }
+            }
+        }
+        if (elixir_module_defined(ctx, imp->module)) {
+            const CBMRegisteredFunc *fi =
+                cbm_registry_lookup_symbol(ctx->registry, ctx->module_qn, key);
+            if (fi && fi->qualified_name) {
+                elixir_emit(ctx, fi->qualified_name, "lsp_ex_import", ELIXIR_CONF_IMPORT);
+                return;
+            }
+        }
+        const CBMRegisteredFunc *si = cbm_registry_lookup_symbol(ctx->registry, imp->module, key);
+        if (si && si->qualified_name) {
+            elixir_emit(ctx, si->qualified_name, "lsp_ex_stdlib", ELIXIR_CONF_STDLIB);
+            return;
+        }
     }
     /* Kernel auto-import fallback — a bare call not defined in this module may
      * be a Kernel builtin. (Classifies the call; forms a graph edge only if a

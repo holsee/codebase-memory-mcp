@@ -465,6 +465,71 @@ TEST(elixirlsp_protocol_dispatch_cross) {
     PASS();
 }
 
+/* ── Import-selector resolution (PR-2.5b, ladder rung c) ────────── */
+
+/* `import Enum, only: [map: 2]` then a bare `map(l, f)` classifies stdlib. */
+TEST(elixirlsp_import_only_stdlib) {
+    const char *src = "defmodule M do\n"
+                      "  import Enum, only: [map: 2]\n"
+                      "  def run(l), do: map(l, fn x -> x end)\n"
+                      "end\n";
+    CBMFileResult *r = extract_elixir(src);
+    ASSERT(r);
+    ASSERT(find_resolved(r, "run", "Enum.map/2", "lsp_ex_stdlib") != NULL);
+    cbm_free_result(r);
+    PASS();
+}
+
+/* An `only:` selector that does not admit the call's arity must not resolve. */
+TEST(elixirlsp_import_only_arity_mismatch) {
+    const char *src = "defmodule M do\n"
+                      "  import Enum, only: [map: 2]\n"
+                      "  def run(l), do: map(l)\n"
+                      "end\n";
+    CBMFileResult *r = extract_elixir(src);
+    ASSERT(r);
+    ASSERT(find_resolved(r, "run", "map", NULL) == NULL);
+    cbm_free_result(r);
+    PASS();
+}
+
+/* `except:` excludes the listed pair but admits the rest of the module. */
+TEST(elixirlsp_import_except) {
+    const char *src = "defmodule M do\n"
+                      "  import Enum, except: [map: 2]\n"
+                      "  def run(l) do\n"
+                      "    count(l)\n"
+                      "    map(l, fn x -> x end)\n"
+                      "  end\n"
+                      "end\n";
+    CBMFileResult *r = extract_elixir(src);
+    ASSERT(r);
+    ASSERT(find_resolved(r, "run", "Enum.count/1", "lsp_ex_stdlib") != NULL);
+    ASSERT(find_resolved(r, "run", "Enum.map", NULL) == NULL);
+    cbm_free_result(r);
+    PASS();
+}
+
+/* A bare call imported from a project module resolves cross-file via the
+ * module map (lsp_ex_import) — incl. the pipe's +1 arity. */
+TEST(elixirlsp_import_cross_file) {
+    const char *src = "defmodule Mainx do\n"
+                      "  import Mathx, only: [double: 1]\n"
+                      "  def run(x), do: x |> double()\n"
+                      "end\n";
+    CBMArena arena;
+    cbm_arena_init(&arena);
+    CBMResolvedCallArray out;
+    memset(&out, 0, sizeof(out));
+    CBMLSPDef defs[4];
+    cross_defs(defs);
+    cbm_run_elixir_lsp_cross(&arena, src, (int)strlen(src), "test.mainx", defs, 4, NULL, NULL, 0,
+                             NULL, &out);
+    ASSERT(cross_find(&out, "test.mathx.double/1", "lsp_ex_import") != NULL);
+    cbm_arena_destroy(&arena);
+    PASS();
+}
+
 /* ── Local captures (PR-2.5a, ladder rung d) ───────────────────── */
 
 /* A local capture `&double/1` passed to Enum.map resolves lsp_ex_capture. */
@@ -543,5 +608,9 @@ SUITE(elixir_lsp) {
     RUN_TEST(elixirlsp_capture_local);
     RUN_TEST(elixirlsp_capture_arity_selection);
     RUN_TEST(elixirlsp_capture_unknown_zero_edge);
+    RUN_TEST(elixirlsp_import_only_stdlib);
+    RUN_TEST(elixirlsp_import_only_arity_mismatch);
+    RUN_TEST(elixirlsp_import_except);
+    RUN_TEST(elixirlsp_import_cross_file);
     RUN_TEST(elixirlsp_empty_module);
 }
