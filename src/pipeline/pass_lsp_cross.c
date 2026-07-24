@@ -23,6 +23,7 @@
 #include "lsp/java_lsp.h"
 #include "lsp/kotlin_lsp.h"
 #include "lsp/rust_lsp.h"
+#include "lsp/elixir_lsp.h"
 #include "lsp/rust_cargo.h"
 #include "graph_buffer/graph_buffer.h"
 #include "foundation/constants.h"
@@ -415,6 +416,7 @@ bool cbm_pxc_has_cross_lsp(CBMLanguage lang) {
     case CBM_LANG_JAVA:   /* fallback cbm_pxc_run_one path */
     case CBM_LANG_KOTLIN: /* fallback cbm_pxc_run_one path */
     case CBM_LANG_RUST:   /* fallback cbm_pxc_run_one path (manifest-aware) */
+    case CBM_LANG_ELIXIR: /* fallback cbm_pxc_run_one path (full-def, filter-exempt) */
         return true;
     default:
         return false;
@@ -577,6 +579,10 @@ void cbm_pxc_run_one(CBMLanguage lang, CBMFileResult *r, const char *source, int
         cbm_run_kotlin_lsp_cross(&scratch, source, source_len, module_qn, defs, def_count,
                                  imp_names, imp_qns, imp_count, tree, &out);
         break;
+    case CBM_LANG_ELIXIR:
+        cbm_run_elixir_lsp_cross(&scratch, source, source_len, module_qn, defs, def_count,
+                                 imp_names, imp_qns, imp_count, tree, &out);
+        break;
     case CBM_LANG_RUST: {
         /* The Rust resolver wants CBMRustLSPDef (rust_lsp.h), not the
          * pipeline's CBMLSPDef — the structs share their first 9 fields
@@ -726,7 +732,7 @@ void cbm_pxc_dispatch_file(CBMLanguage lang, CBMFileResult *result, const char *
     CBMLSPDef *filtered = NULL;
     CBMLSPDef *file_defs = all_defs;
     int file_def_count = all_def_count;
-    if (module_def_index && lang != CBM_LANG_RUST) {
+    if (module_def_index && lang != CBM_LANG_RUST && lang != CBM_LANG_ELIXIR) {
         int filtered_count = 0;
         filtered =
             cbm_pxc_filter_defs_for_file(module_def_index, all_defs, lang, result->namespace_name,

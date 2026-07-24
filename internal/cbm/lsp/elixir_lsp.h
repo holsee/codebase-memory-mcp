@@ -73,6 +73,13 @@ typedef struct {
     int use_count;
     int use_cap;
 
+    /* Cross-file module-identity map (Phase 2b), populated ONLY by
+     * cbm_run_elixir_lsp_cross from Class-label defs: Elixir module name ->
+     * def_module_qn (the path-based module prefix). NULL in the per-file pass,
+     * so the cross-resolution branch is inert there (Phase 1 preserved).
+     * Opaque (CBMHashTable*) to keep a foundation include out of this header. */
+    void *cross_module_map;
+
     /* Current context pointers. */
     const char *enclosing_module_qn; /* module QN of the enclosing scope */
     const char *enclosing_func_qn;   /* enclosing def QN, or NULL */
