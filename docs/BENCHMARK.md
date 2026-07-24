@@ -509,6 +509,13 @@ passing. Total project tests: 2913 / 0 failed.
 
 ### Elixir (elixir-plug/plug)
 
+> **Update (2026-07-24):** Elixir is now a full Hybrid LSP language (resolver
+> with name/arity identity, cross-file module resolution, behaviour linkage,
+> and zero-edge suppression of stdlib/dep/atom-module false matches). The
+> results below predate that work; the phase-by-phase evaluation with pinned
+> SHAs lives in `docs/elixir-lsp/testing/` (final rubric: 17/17 PASS under a
+> strict MCP-only runner; resolver-verified call-edge share 56.8 % on plug).
+
 **Project**: `plug-elixir` | **Repo**: `/tmp/lang-bench/plug-elixir`
 **Nodes**: 870 | **Edges**: 865
 

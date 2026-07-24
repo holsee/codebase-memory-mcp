@@ -96,6 +96,7 @@ The current Hybrid LSP release benchmark matrix is:
 | Java | Spring Framework or Elasticsearch |
 | Kotlin | Kotlin compiler or Ktor |
 | Rust | Rust compiler |
+| Elixir | plausible/analytics |
 
 The matrix may be updated by PR as the project evolves, but every supported
 Hybrid LSP family keeps at least one large OSS indexing benchmark before a
