@@ -258,6 +258,7 @@ int cbm_compute_change_coupling(const cbm_commit_files_t *commits, int commit_co
  * Finds Interface nodes, matches method sets against Class nodes,
  * creates IMPLEMENTS + OVERRIDE edges. Returns edge count created. */
 int cbm_pipeline_implements_go(cbm_pipeline_ctx_t *ctx);
+int cbm_pipeline_behaviours_elixir(cbm_pipeline_ctx_t *ctx);
 
 /* ── Git diff helpers (pass_gitdiff.c) ───────────────────────────── */
 

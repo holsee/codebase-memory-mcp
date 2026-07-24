@@ -59,6 +59,22 @@ int cbm_elixir_call_arity(TSNode call_node, const char *source);
 // to *arity_out and returns true; otherwise returns false.
 bool cbm_elixir_capture_arity(TSNode node, const char *source, int *arity_out);
 
+// Curated Elixir behaviours (Phase 2.7b). A module that `use`s or declares
+// `@behaviour` on one of these gains an INHERITS edge to a synthetic
+// behaviour Class node, and its callback defs gain OVERRIDE edges to the
+// behaviour's callback identities (emitted by the semantic pass).
+typedef struct {
+    const char *name; // callback name (NULL terminates the list)
+    int arity;
+} CBMElixirCallback;
+
+// True when `name` is a curated behaviour (GenServer, Supervisor, ...).
+bool cbm_elixir_known_behaviour(const char *name);
+
+// The curated callback list for `behaviour`, terminated by a NULL name.
+// Returns NULL for unknown behaviours.
+const CBMElixirCallback *cbm_elixir_behaviour_callbacks(const char *behaviour);
+
 // Get the QN of an enclosing function, or module_qn if none.
 const char *cbm_enclosing_func_qn(CBMArena *a, TSNode node, CBMLanguage lang, const char *source,
                                   const char *project, const char *rel_path, const char *module_qn);

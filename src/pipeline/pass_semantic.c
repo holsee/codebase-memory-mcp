@@ -22,6 +22,7 @@
 #include "foundation/compat_fs.h"
 #include "foundation/limits.h"
 #include "cbm.h"
+#include "helpers.h" /* cbm_elixir_behaviour_callbacks (Phase 2.7b) */
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -300,6 +301,69 @@ static int check_go_class_implements(cbm_pipeline_ctx_t *ctx, const cbm_gbuf_nod
     return edges;
 }
 
+/* Elixir behaviour OVERRIDE linkage (Phase 2.7b). The extractor conditionally
+ * injects synthetic behaviour Class + callback nodes (file
+ * "<elixir-behaviours>") and records used behaviours in the module Class's
+ * base_classes (→ INHERITS). Here: for every Elixir module Class with an
+ * INHERITS edge to a behaviour Class, link its callback-named defs to the
+ * behaviour's callback identities with OVERRIDE edges. Elixir Function QNs are
+ * path-based, so a def QN is the Class QN with the trailing ".<ModuleName>"
+ * replaced by ".<callback>/<arity>". */
+int cbm_pipeline_behaviours_elixir(cbm_pipeline_ctx_t *ctx) {
+    int edge_count = 0;
+    const cbm_gbuf_node_t **classes = NULL;
+    int class_count = 0;
+    if (cbm_gbuf_find_by_label(ctx->gbuf, "Class", &classes, &class_count) != 0) {
+        return 0;
+    }
+    for (int i = 0; i < class_count; i++) {
+        const cbm_gbuf_node_t *cls = classes[i];
+        if (!cls || !cls->file_path || !cls->qualified_name || !cls->name) {
+            continue;
+        }
+        if (!fp_ends_with(cls->file_path, ".ex") && !fp_ends_with(cls->file_path, ".exs")) {
+            continue;
+        }
+        const cbm_gbuf_edge_t **inh = NULL;
+        int inh_count = 0;
+        if (cbm_gbuf_find_edges_by_source_type(ctx->gbuf, cls->id, "INHERITS", &inh, &inh_count) !=
+                0 ||
+            inh_count == 0) {
+            continue;
+        }
+        /* Module path prefix = Class QN minus ".<ModuleName>". */
+        size_t qlen = strlen(cls->qualified_name);
+        size_t nlen = strlen(cls->name);
+        if (qlen <= nlen + 1 || cls->qualified_name[qlen - nlen - 1] != '.' ||
+            strcmp(cls->qualified_name + qlen - nlen, cls->name) != 0) {
+            continue;
+        }
+        int plen = (int)(qlen - nlen - 1);
+        for (int e = 0; e < inh_count; e++) {
+            const cbm_gbuf_node_t *beh = cbm_gbuf_find_by_id(ctx->gbuf, inh[e]->target_id);
+            if (!beh || !beh->file_path || !beh->name ||
+                strcmp(beh->file_path, "<elixir-behaviours>") != 0) {
+                continue;
+            }
+            const CBMElixirCallback *cbs = cbm_elixir_behaviour_callbacks(beh->name);
+            for (const CBMElixirCallback *cb = cbs; cb && cb->name; cb++) {
+                char fn_qn[CBM_SZ_512];
+                char cb_qn[CBM_SZ_512];
+                snprintf(fn_qn, sizeof(fn_qn), "%.*s.%s/%d", plen, cls->qualified_name, cb->name,
+                         cb->arity);
+                snprintf(cb_qn, sizeof(cb_qn), "%s.%s/%d", beh->name, cb->name, cb->arity);
+                const cbm_gbuf_node_t *fn = cbm_gbuf_find_by_qn(ctx->gbuf, fn_qn);
+                const cbm_gbuf_node_t *cbn = cbm_gbuf_find_by_qn(ctx->gbuf, cb_qn);
+                if (fn && cbn && fn->id != cbn->id) {
+                    cbm_gbuf_insert_edge(ctx->gbuf, fn->id, cbn->id, "OVERRIDE", "{}");
+                    edge_count++;
+                }
+            }
+        }
+    }
+    return edge_count;
+}
+
 int cbm_pipeline_implements_go(cbm_pipeline_ctx_t *ctx) {
     int edge_count = 0;
 
@@ -575,6 +639,9 @@ int cbm_pipeline_pass_semantic(cbm_pipeline_ctx_t *ctx, const cbm_file_info_t *f
     /* ── Go-style implicit interface satisfaction ──────────────── */
     int go_impl = cbm_pipeline_implements_go(ctx);
     implements_count += go_impl;
+
+    /* ── Elixir behaviour OVERRIDE linkage (Phase 2.7b) ─────────── */
+    implements_count += cbm_pipeline_behaviours_elixir(ctx);
 
     cbm_log_info("pass.done", "pass", "semantic", "inherits", itoa_log(inherits_count), "decorates",
                  itoa_log(decorates_count), "implements", itoa_log(implements_count), "errors",

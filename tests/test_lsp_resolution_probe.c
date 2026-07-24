@@ -1805,6 +1805,31 @@ TEST(lrp_elixir_s9_stdlib_collision) {
     PASS();
 }
 
+/* S14 — Elixir behaviour linkage (Phase 2.7b). `use GenServer` gives the
+ * module an INHERITS edge to the injected GenServer behaviour Class, and its
+ * callback defs (init/1, handle_call/3) gain OVERRIDE edges to the behaviour's
+ * callback identities. Both are 0 before 2.7b. */
+TEST(lrp_elixir_s14_behaviour_override) {
+    static const LRP_File f[] = {
+        {"serverx.ex", "defmodule Serverx do\n"
+                       "  use GenServer\n"
+                       "  def init(arg), do: {:ok, arg}\n"
+                       "  def handle_call(:x, _f, s), do: {:reply, s, s}\n"
+                       "end\n"}};
+    LRP_Proj lp;
+    cbm_store_t *store = lrp_index(&lp, f, 1);
+    int inherits = store ? cbm_store_count_edges_by_type(store, lp.project, "INHERITS") : -1;
+    int overrides = store ? cbm_store_count_edges_by_type(store, lp.project, "OVERRIDE") : -1;
+    if (inherits < 1 || overrides < 2) {
+        fprintf(stderr, "  [LRP] elixir/S14/behaviour FAIL inherits=%d overrides=%d "
+                        "(expected >=1 / >=2)\n", inherits, overrides);
+        lrp_diag(store, lp.project, "elixir/S14/behaviour");
+    }
+    lrp_cleanup(&lp, store);
+    ASSERT_TRUE(inherits >= 1 && overrides >= 2);
+    PASS();
+}
+
 /* S13 — Elixir defdelegate edge (Phase 2.7a). `defdelegate double(x), to:
  * Mathx` produces a real delegator -> target CALLS edge (the extractor
  * rewrites the delegate call site; the cross resolver supplies the
@@ -2024,6 +2049,7 @@ SUITE(lsp_resolution_probe) {
     RUN_TEST(lrp_elixir_s11_erlang_collision);
     RUN_TEST(lrp_elixir_s12_dep_collision);
     RUN_TEST(lrp_elixir_s13_delegate_edge);
+    RUN_TEST(lrp_elixir_s14_behaviour_override);
 
     /* ── USAGE-edge bonus probes ── */
     RUN_TEST(lrp_go_usage_struct_literal);
