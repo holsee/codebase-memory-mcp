@@ -96,6 +96,32 @@ with the baseline binary and the C1 binary into isolated caches.
 signature change (added `source`, Elixir-gated logic) is confirmed inert for
 non-Elixir languages. Phase 0 is Elixir-scoped as designed.
 
+## Pinned idiom corpus (`corpus/elixir_showcase`)
+
+A small checked-in Elixir project (5 modules, ~35→43 nodes) evaluated the same
+way as the external repos — indexed via the CLI, queried with sqlite — so it is
+a *deterministic* before/after oracle that doesn't drift and adds no C to the
+test suite. Run: `docs/elixir-lsp/testing/corpus-metrics.sh <binary> <cache>`.
+
+| Signal | pre-Phase-0 | Phase 0 |
+|---|---|---|
+| Functions / Classes | 13 / 5 | **18 / 8** |
+| guarded `def User.new/2` node | ✗ | **✓** |
+| `defguard User.is_adult` node | ✗ | **✓** |
+| guarded callback `handle_call` node | ✗ | **✓** |
+| `defmacro Math.const` node | ✓ | ✓ |
+| nested module `Showcase.Server.State` | ✗ (bare `State`) | **✓** |
+| protocol `Showcase.Describable` | ✗ | **✓** |
+| `defimpl … for: User` | ✗ | **✓** |
+| `defimpl … for: BitString` | ✗ | **✓** |
+
+**7 of 8 capability checks flip ✗ → ✓** (the 8th, `defmacro`, already worked).
+This is the same set of Phase-0 wins the external metrics show, but as a tiny
+reproducible fixture. IMPORTS *edges* are intentionally not a headline here: the
+corpus's directives target stdlib/undefined modules, and edge formation needs a
+resolved in-repo target (Phase 2) — import *extraction* is covered by
+`test_grammar_imports.c` and the external plug numbers.
+
 ## Checkpoint C1 verdict
 
 Phase 0 delivered measured structural gains — imports up to 4.1×, call
