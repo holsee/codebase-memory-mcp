@@ -516,7 +516,7 @@ other languages). `scripts/test.sh` full suite is the per-PR guard.
 | Checkpoint C1 recorded (`testing/AFTER-PHASE-0.md`) | — | ☑ 2026-07-24 |
 | PR-1a skeleton + wiring + originality rows | `15985052` | ☑ 2026-07-24 |
 | PR-1b scopes/aliases/imports resolution | `d7da0ca7` | ☑ 2026-07-24 |
-| PR-1c pipes/captures/default arities | | ☐ |
+| PR-1c name/arity identity (D3) + pipes/captures/defaults | `79ebbc7d` | ☑ 2026-07-24 |
 | PR-2a stdlib seed | | ☐ |
 | PR-2b cross-file fallback tier | | ☐ |
 | PR-2c use-table + behaviours + protocols | | ☐ |
@@ -655,6 +655,30 @@ other languages). `scripts/test.sh` full suite is the per-PR guard.
   already resolves much of this corpus by simple-name, so PR-1b's single-file
   value is strategy-tagging (M4), alias-gated precision, and zero-edge
   discipline; the ≥70 % M4 target is Phase 2.
+- 2026-07-24 — PR-1c landed (`79ebbc7d`). **D3 name/arity identity** (deferred
+  here from PR-0c). Def QNs become `Mod.foo/2`; foo/1 and foo/2 are distinct
+  nodes. Landed as the **symmetric** change the PR-0c fable analysis required —
+  `/arity` appended byte-identically at (1) the def node QN (`extract_defs.c`),
+  (2) the enclosing/caller scope QN (`extract_unified.c`), (3) the call-site
+  `callee_name` (`extract_calls.c`), and (4) the LSP resolver's caller QN +
+  callee lookups (`elixir_lsp.c`) — all `CBM_LANG_ELIXIR`-gated; pipeline/store/
+  schema/fqn/graph_buffer untouched (QN opaque; `simple_name` splits on `.`/`::`
+  so `/N` survives). Three shared AST helpers in `helpers.c`
+  (`cbm_elixir_def_arity`/`_call_arity`/`_capture_arity`) — **`CBMCall.arg_count`
+  is never populated for Elixir**, so arity is read straight from the AST.
+  Default args fan out one node per arity `min..max`; pipe `x |> f(y)` = `f/2`;
+  capture `&f/N` uses the literal N. **Design delegated to fable** (per standing
+  instruction), which verified against the grammar + live resolver and corrected
+  three wrong assumptions (arg_count=0; caller QN spans 3 sites incl. the LSP;
+  captures resolve via the generic path so naive arity breaks `&fun/N`). Only one
+  test assertion needed updating (`test_extraction.c` control-flow →
+  `handle/1`); `def.name` stays bare so `has_def`/`search_graph name_pattern`
+  are unaffected. Graph proof on `elixir_showcase`: `user.promote/1` and
+  `user.promote/2` are now distinct nodes; `handle_call→tick/2` resolves
+  `lsp_ex_local`; `&double/1`→`double/1`. 3 new arity tests; canaries
+  (`probe_elixir_module_calls`, 53-lang CALLS-breadth, lang_contract, grammar,
+  lrp_elixir S4 pipe/S5 capture) all GREEN. Full suite 6640/0. **Phase 1
+  complete** — next is the checkpoint C1.5 (`AFTER-PHASE-1.md`).
 - 2026-07-24 — Test-coverage audit + backfill. Found three added code paths
   with no test exercising them: PR-0d's multi-alias `Foo.{Bar, Baz}` expansion
   and `alias X, as: Y` handling (the grammar_imports fixture used only plain
