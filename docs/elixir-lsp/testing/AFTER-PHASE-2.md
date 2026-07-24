@@ -11,6 +11,97 @@ a `Mod.fun/arity` call to a module in another file now resolves to that module's
 def node (`lsp_ex_cross`). This is the checkpoint at which M4 was expected to
 climb toward the ≥ 70 % goal.
 
+## Cross-checkpoint comparison (Baseline → Phase 2)
+
+Four binaries — **Baseline** (`main` before any Elixir work), **Phase 0**
+(grammar remediation), **Phase 1** (resolver + arity), **Phase 2** (cross-file +
+knowledge) — each indexing the same four Elixir codebases into isolated caches:
+three pinned external repos (`plug` 78 `.ex` files, `phoenix` 177,
+`plausible/analytics` 1,210) and the in-repo `elixir_showcase` oracle (5
+modules). Three metrics, each measuring a distinct real-world capability tied to
+a defect the work fixed.
+
+### 1. Semantic call-resolution coverage (M4)
+
+**What:** of the Elixir call edges in the graph, the share resolved by the
+semantic resolver (a module- and arity-verified `lsp_ex_*` strategy) rather than
+by textual name-guessing. **Why it matters:** a name-guessed edge points at
+*some* function with a matching name; a resolver-verified edge points at the
+*right* one — so this is the share of "who-calls-what" edges trustworthy for
+cross-module navigation.
+
+| Resolver-verified call edges | plug | phoenix | analytics | showcase |
+|---|---|---|---|---|
+| Baseline — no resolver exists | 0 % | 0 % | 0 % | 0 % |
+| Phase 0 — grammar only, still no resolver | 0 % | 0 % | 0 % | 0 % |
+| Phase 1 — per-file resolver (PR-1a/b/c) | 34.9 % | 32.5 % | 18.3 % | 16.7 % |
+| Phase 2 — + cross-file resolver (PR-2b) | **44.8 %** | **42.4 %** | **33.7 %** | **66.7 %** |
+
+**Change → goal → outcome:** Phase 1 introduced `elixir_lsp` (goal G2 — a
+per-file resolver Elixir never had): coverage rises from nothing to a third of
+calls. Phase 2's cross-file resolver (goal G3) resolves calls into *other* files
+(`lsp_ex_cross`), adding +10–33 points; the clean, idiom-dense showcase reaches
+two-thirds. The showcase figure rests on **6 call edges total**, so it is a
+capability oracle, not a statistic — the external repos carry the scale claim.
+
+### 2. Call-attribution correctness (M2)
+
+**What:** share of call edges whose *source* is the actual enclosing function,
+not the whole module. **Why it matters:** an edge that says "module `Accounts`
+calls `User.new`" cannot answer "which *function* calls `User.new`?" — the call
+must be attributed to `register/2`. Module-level attribution makes call-chains
+and impact analysis useless.
+
+| Calls sourced from the enclosing function | plug | phoenix | analytics | showcase |
+|---|---|---|---|---|
+| Baseline | 56.4 % | 70.3 % | 60.2 % | 40.0 % |
+| Phase 0 — attribution fix (D2) | **67.6 %** | **76.0 %** | **63.3 %** | **100.0 %** |
+| Phase 1 | 63.0 % | 71.8 % | 62.6 % | 100.0 % |
+| Phase 2 | 63.1 % | 72.0 % | 62.7 % | 100.0 % |
+
+**Change → goal → outcome:** defect **D2** — in-body calls were attributed to
+the module because any `call` node counted as a function container. PR-0b made
+attribution target-aware (a call counts as a container only when its macro is a
+real `def`) and recovered guarded-def bodies. On the showcase, whose functions
+are guarded, this took attribution from **40 % → 100 %**. The small Phase 0 →
+Phase 1 dip (e.g. plug 67.6 → 63.0) is *precision*, not regression: arity
+identity (below) stopped counting fuzzy cross-file name matches that had
+inflated the earlier figure.
+
+### 3. Function capture & identity (M1)
+
+**What:** how many function definitions the parser captures at all, and whether
+each carries `name/arity` identity (so `foo/1` and `foo/2` are distinct nodes).
+**Why it matters:** a definition the parser drops is invisible to the entire
+graph; and in Elixir `name/arity` *is* a function's identity — collapsing
+arities merges genuinely different functions.
+
+| Function definitions captured | plug | phoenix | analytics | showcase | `name/arity` identity |
+|---|---|---|---|---|---|
+| Baseline | 531 | 1,351 | 4,292 | 13 | no |
+| Phase 0 — guarded + def-like forms (D1/D4) | 568 | 1,445 | 4,399 | 18 | no |
+| Phase 1 — arity + default fan-out (D3) | 645 | 1,594 | 4,781 | 19 | **yes — 100 %** |
+| Phase 2 | 645 | 1,594 | 4,781 | 19 | yes — 100 % |
+
+**Change → goal → outcome:** defects **D1/D4** — guard-clause heads
+(`def f(x) when …`) and def-like forms (`defmacro`, `defguard`, `defdelegate`,
+`defprotocol`/`defimpl`) were silently dropped. PR-0a captured them (plug +37
+functions; the showcase's guarded `User.new`, `defguard is_adult`, and guarded
+`handle_call` went from absent to present). Defect **D3** — every function
+shared one node regardless of arity; PR-1c gave each `name/arity` its own node
+and fanned default args out (`def f(a, b \\ 1)` → both `f/1` and `f/2`), so
+**100 %** of functions became arity-identified.
+
+### The honest ceiling and gap
+
+Resolver coverage tops out at **66.7 % on clean code** (showcase) but sits at
+**34–45 %** on real repos. The difference is the enumerated Phase-3 gap:
+captures (`&f/N`), bare imported calls (`import …, only:`), and stdlib/project
+name-collisions still fall to the textual resolver. Index time and node/edge
+counts stayed flat across all four checkpoints, and a non-Elixir TypeScript
+control was byte-identical throughout — so every gain above came without cost to
+indexing speed or to other languages.
+
 ## Index run (M5) — perf guard ≤ +15 %
 
 | Repo | Index time C1.5 → C2 | Nodes | Edges C1.5 → C2 |
