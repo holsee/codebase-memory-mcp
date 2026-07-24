@@ -684,7 +684,7 @@ other languages). `scripts/test.sh` full suite is the per-PR guard.
 | PR-2.7c opt-in stdlib nodes (B7) | `ad278850` | ☑ 2026-07-24 |
 | PR-2.7d defstruct/defexception nodes (B8) | `4b3b690b` | ☑ 2026-07-24 |
 | Checkpoint C2.7 recorded (`testing/AFTER-PHASE-2.7.md`) | — | ☑ 2026-07-24 |
-| PR-3a QA hardening | | ☐ |
+| PR-3a QA hardening (Windows leg deferred → WINDOWS-VERIFICATION.md) | `007be938` | ☑ 2026-07-24 |
 | PR-3b docs + promotion + release matrix | | ☐ |
 
 **Log**
