@@ -27,6 +27,10 @@ echo "# elixir_showcase — $BIN"
 echo "nodes=$(q 'SELECT COUNT(*) FROM nodes')  edges=$(q 'SELECT COUNT(*) FROM edges')"
 echo "Functions=$(q "SELECT COUNT(*) FROM nodes WHERE label IN ('Function','Method')")  Classes=$(q "SELECT COUNT(*) FROM nodes WHERE label='Class'")"
 echo "CALLS=$(q "SELECT COUNT(*) FROM edges WHERE type='CALLS'")  DEFINES=$(q "SELECT COUNT(*) FROM edges WHERE type='DEFINES'")"
+# IMPORTS accuracy (Phase 2.5d): in-repo directives resolve to the declaring
+# module's Class node; stdlib/undefined targets form no edge. List targets so
+# a mis-pointed edge is visible, not just counted.
+echo "IMPORTS=$(q "SELECT COUNT(*) FROM edges WHERE type='IMPORTS'")  targets: $(q "SELECT GROUP_CONCAT(DISTINCT t.name) FROM edges e JOIN nodes t ON e.target_id=t.id WHERE e.type='IMPORTS'")"
 # NOTE: IMPORTS *edges* need a resolved in-repo target node, which is Phase-2
 # cross-module resolution — most of this corpus's directives target stdlib
 # (GenServer/Logger) or intentionally-undefined modules, so edge count is not a
