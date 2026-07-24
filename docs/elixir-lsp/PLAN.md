@@ -609,7 +609,7 @@ other languages). `scripts/test.sh` full suite is the per-PR guard.
 | Checkpoint C2 recorded (`testing/AFTER-PHASE-2.md`) | — | ☑ 2026-07-24 |
 | PR-2.5a local captures (`lsp_ex_capture`, ladder rung d) | `69c058a8` | ☑ 2026-07-24 |
 | PR-2.5b import-selector resolution (`lsp_ex_import`, ladder rung c) | `058925ba` | ☑ 2026-07-24 |
-| PR-2.5c external-call textual-fallback suppression | | ☐ |
+| PR-2.5c external-call textual-fallback suppression | `3961fbec` | ☑ 2026-07-24 |
 | PR-2.5d IMPORTS-edge resolution to Class nodes (C1 register item) | | ☐ |
 | Checkpoint C2.5 recorded (`testing/AFTER-PHASE-2.5.md`) | — | ☐ |
 | PR-3a QA hardening | | ☐ |
@@ -892,6 +892,14 @@ other languages). `scripts/test.sh` full suite is the per-PR guard.
   curated stdlib (`lsp_ex_stdlib`); non-admitted arities never resolve.
   **Showcase oracle: 6/6 resolver-verified (100 %)** — the `|> double()`
   imported bare call was the last textual edge. 4 new tests. Full suite 6655/0.
+- 2026-07-24 — PR-2.5c landed (`3961fbec`). External-call suppression:
+  `cbm_elixir_suppress_external_match` (lsp_resolve.h, shared) — when the
+  resolver classified a call external (`lsp_ex_stdlib`/`kernel`/`use`) and no
+  target node exists, both pipeline paths suppress ONLY the plain-CALLS
+  registry fall-through (the TS/JS shape; service branches untouched). The C2
+  rubric's false edge (`Keyword.get/3` → project `Plug.Router.get/3`) is gone;
+  new probe `lrp_elixir_s9_stdlib_collision` pins it (CALLS must be 0). Plug
+  CALLS(ex) 1202→1119 (−83 false edges). Full suite 6656/0.
   with no test exercising them: PR-0d's multi-alias `Foo.{Bar, Baz}` expansion
   and `alias X, as: Y` handling (the grammar_imports fixture used only plain
   directives), and PR-0c's *nested* `defimpl` prefix. Added
