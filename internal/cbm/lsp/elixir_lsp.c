@@ -37,12 +37,15 @@
  * is Phase 2b.
  *
  * Resolution ladder:
- *   - local `fun(args)`      → file-local def, else Kernel builtin
- *                              → lsp_ex_local / lsp_ex_kernel
+ *   - local `fun(args)`      → file-local def (lsp_ex_local), else Kernel
+ *                              builtin (lsp_ex_kernel), else a function injected
+ *                              by a `use Framework` the module pulled in
+ *                              (Phoenix.Controller.render, …) → lsp_ex_use
  *   - qualified `Mod.fun(a)` → Mod is a file-defined module or `__MODULE__`
  *                              → file-local def (lsp_ex_qualified);
- *                              else a curated stdlib module (Enum/Map/GenServer…)
- *                              → lsp_ex_stdlib
+ *                              else a module in another file → lsp_ex_cross
+ *                              (Phase 2b); else a curated stdlib module
+ *                              (Enum/Map/GenServer…) → lsp_ex_stdlib
  * Everything else — a qualified call to an unknown cross-file project module, a
  * variable-module dispatch, `apply/3`, `unquote` — emits NO edge (Phase 2b or
  * genuinely dynamic). Name/arity identity (Phase 1c) suffixes every def QN and
@@ -73,6 +76,7 @@ extern const TSLanguage *tree_sitter_elixir(void);
 #define ELIXIR_CONF_QUALIFIED 0.90f /* alias-gated same-file qualified hit */
 #define ELIXIR_CONF_STDLIB 0.85f    /* curated Kernel / core-module hit */
 #define ELIXIR_CONF_CROSS 0.85f     /* cross-file project-module hit (Phase 2b) */
+#define ELIXIR_CONF_USE 0.85f       /* use-macro-injected framework function (Phase 2c) */
 
 /* Maximum AST-walk recursion depth. Mirrors CBM_LSP_PERL_MAX_WALK_DEPTH: the
  * per-child recursion can stack-overflow on pathologically nested sources; past
@@ -226,6 +230,25 @@ static bool elixir_module_defined(ElixirLSPContext *ctx, const char *mod) {
     return false;
 }
 
+/* Append `s` (arena-copied) to an arena-backed parallel string array, doubling
+ * capacity as needed. Bounded at 64 entries — directive lists are small. */
+static void elixir_add_str(ElixirLSPContext *ctx, const char ***arr, int *count, int *cap,
+                           const char *s) {
+    if (!s || !s[0] || *count >= 64)
+        return;
+    if (*count >= *cap) {
+        int nc = *cap ? *cap * 2 : 8;
+        const char **n = (const char **)cbm_arena_alloc(ctx->arena, (size_t)nc * sizeof(char *));
+        if (!n)
+            return;
+        for (int i = 0; i < *count; i++)
+            n[i] = (*arr)[i];
+        *arr = n;
+        *cap = nc;
+    }
+    (*arr)[(*count)++] = cbm_arena_strdup(ctx->arena, s);
+}
+
 /* Record an `as: Alias` value among a directive's trailing keyword args. */
 static const char *elixir_find_as_alias(ElixirLSPContext *ctx, TSNode args) {
     uint32_t ac = ts_node_child_count(args);
@@ -317,24 +340,15 @@ static void elixir_scan_directives(ElixirLSPContext *ctx,
                         elixir_add_alias(ctx, as ? as : elixir_last_segment(ctx->arena, mtext),
                                          mtext, line);
                     } else if (strcmp(kw, "import") == 0) {
-                        if (ctx->import_count < 64) {
-                            if (ctx->import_count >= ctx->import_cap) {
-                                int ncp = ctx->import_cap ? ctx->import_cap * 2 : 8;
-                                const char **ni =
-                                    cbm_arena_alloc(ctx->arena, (size_t)ncp * sizeof(char *));
-                                if (ni) {
-                                    for (int i = 0; i < ctx->import_count; i++)
-                                        ni[i] = ctx->import_module[i];
-                                    ctx->import_module = ni;
-                                    ctx->import_cap = ncp;
-                                }
-                            }
-                            if (ctx->import_count < ctx->import_cap)
-                                ctx->import_module[ctx->import_count++] =
-                                    cbm_arena_strdup(ctx->arena, mtext);
-                        }
+                        elixir_add_str(ctx, &ctx->import_module, &ctx->import_count,
+                                       &ctx->import_cap, mtext);
+                    } else if (strcmp(kw, "use") == 0) {
+                        /* `use Framework` — record the (alias-expanded) target so
+                         * the local rung can resolve calls to functions the macro
+                         * injects (Phoenix.Controller.render, Ecto.Schema.field…). */
+                        elixir_add_str(ctx, &ctx->use_module, &ctx->use_count, &ctx->use_cap,
+                                       elixir_expand_alias(ctx, mtext, line));
                     }
-                    /* `use` recorded structurally; expansion is Phase 2c. */
                 }
             }
         }
@@ -389,8 +403,21 @@ static void elixir_resolve_local(ElixirLSPContext *ctx, TSNode node, const char 
      * be a Kernel builtin. (Classifies the call; forms a graph edge only if a
      * Kernel node exists — see elixir_stdlib_data.c scope note.) */
     const CBMRegisteredFunc *k = cbm_registry_lookup_symbol(ctx->registry, "Kernel", key);
-    if (k && k->qualified_name)
+    if (k && k->qualified_name) {
         elixir_emit(ctx, k->qualified_name, "lsp_ex_kernel", ELIXIR_CONF_STDLIB);
+        return;
+    }
+    /* use-injected functions (Phase 2c): a bare call may be a function the module
+     * pulled in via `use Framework` (Phoenix.Controller.render, Ecto.Schema.field,
+     * ExUnit.Case.test, …). Consult each used framework's curated table. */
+    for (int i = 0; i < ctx->use_count; i++) {
+        const CBMRegisteredFunc *u =
+            cbm_registry_lookup_symbol(ctx->registry, ctx->use_module[i], key);
+        if (u && u->qualified_name) {
+            elixir_emit(ctx, u->qualified_name, "lsp_ex_use", ELIXIR_CONF_USE);
+            return;
+        }
+    }
 }
 
 /* Resolve a qualified `Mod.fun(args)` call. Mod is alias-expanded; if it is a

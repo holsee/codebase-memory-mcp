@@ -1,0 +1,2 @@
+question,variant,grade,attempts,tools,note
+cross-module+arity,candidate(P2),PASS,1,"index_status,search_graph x2,query_graph,get_code_snippet x2","Plug.BasicAuth cross-module calls to Plug.Conn.get_req_header/2,halt/1,put_resp_header/3,resp/3 resolved arity-precise; basic_auth/1+/2 and request_basic_auth/1+/2 distinct (default-arg); model flagged the textual Keyword.get/3->Plug.Router.get/3 misresolution (the M4-gap stdlib collision)"
