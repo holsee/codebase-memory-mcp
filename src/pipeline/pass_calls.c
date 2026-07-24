@@ -468,18 +468,19 @@ static int resolve_single_call(cbm_pipeline_ctx_t *ctx, CBMCall *call,
      * Unique-tail fallbacks are JVM-only (see cbm_pipeline_lsp_allow_tail_match). */
     bool allow_tail = cbm_pipeline_lsp_allow_tail_match(lang);
     const CBMResolvedCall *lsp = cbm_pipeline_find_lsp_resolution(lsp_calls, call, allow_tail);
+    const cbm_gbuf_node_t *lsp_target = NULL;
     if (lsp) {
-        const cbm_gbuf_node_t *target_node =
+        lsp_target =
             cbm_pipeline_lsp_target_node(ctx->gbuf, ctx->project_name, lsp->callee_qn, allow_tail);
-        if (target_node && source_node->id != target_node->id) {
+        if (lsp_target && source_node->id != lsp_target->id) {
             cbm_resolution_t res = {0};
             /* Use the gbuf node's QN so downstream edge props show the canonical
              * project-qualified form even when fallback prefixed the project. */
-            res.qualified_name = target_node->qualified_name;
+            res.qualified_name = lsp_target->qualified_name;
             res.confidence = lsp->confidence;
             res.strategy = lsp->strategy;
             res.candidate_count = 1;
-            emit_classified_edge(ctx, call, source_node, target_node, &res, module_qn, imp_keys,
+            emit_classified_edge(ctx, call, source_node, lsp_target, &res, module_qn, imp_keys,
                                  imp_vals, imp_count, false);
             return SKIP_ONE;
         }
@@ -586,6 +587,15 @@ static int resolve_single_call(cbm_pipeline_ctx_t *ctx, CBMCall *call,
     bool tsjs_drop_plain_call =
         cbm_tsjs_suppress_weak_method_match(is_tsjs, call->is_method, res.strategy);
 
+    /* Elixir external-call suppression (Phase 2.5c). The Elixir LSP classified
+     * this call as a known-external stdlib/Kernel/use target with no graph node
+     * (lsp_target NULL); the registry's short-name match would fabricate an
+     * edge to a same-named PROJECT function (`Keyword.get/3` -> a project
+     * `get/3`). Like the TS/JS guard above, suppress ONLY the plain-CALLS
+     * fall-through so service/route/config branches stay untouched. */
+    bool elixir_drop_plain_call =
+        cbm_elixir_suppress_external_match(lang == CBM_LANG_ELIXIR, lsp, lsp_target);
+
     /* Service-pattern HTTP/ASYNC calls to an EXTERNAL client library (e.g.
      * `requests.get("/api/orders/{id}")`) resolve to a QN containing the library
      * name ("requests"), but that library is not in the indexed tree so
@@ -611,7 +621,7 @@ static int resolve_single_call(cbm_pipeline_ctx_t *ctx, CBMCall *call,
         return 0;
     }
     emit_classified_edge(ctx, call, source_node, target_node, &res, module_qn, imp_keys, imp_vals,
-                         imp_count, tsjs_drop_plain_call);
+                         imp_count, tsjs_drop_plain_call || elixir_drop_plain_call);
     return SKIP_ONE;
 }
 

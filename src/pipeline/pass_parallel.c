@@ -2336,6 +2336,14 @@ static void resolve_file_calls(resolve_ctx_t *rc, resolve_worker_state_t *ws, CB
         bool tsjs_drop_plain_call =
             cbm_tsjs_suppress_weak_method_match(is_tsjs, call->is_method, res.strategy);
 
+        /* Elixir external-call suppression (Phase 2.5c), mirroring the
+         * sequential pass: the Elixir LSP classified this call as a
+         * known-external stdlib/Kernel/use target with no graph node, so the
+         * registry's short-name match would fabricate an edge to a same-named
+         * PROJECT function. Suppress ONLY the plain-CALLS fall-through. */
+        bool elixir_drop_plain_call =
+            cbm_elixir_suppress_external_match(lang == CBM_LANG_ELIXIR, lsp, lsp_target);
+
         /* Service-pattern HTTP/ASYNC client call (`requests.get(url)`): the
          * service signal lives in the callee_name. The registry can mis-resolve
          * it to a spurious builtin short-name match (`requests.get` ->
@@ -2423,7 +2431,7 @@ static void resolve_file_calls(resolve_ctx_t *rc, resolve_worker_state_t *ws, CB
         _rc_t0 = extract_now_ns();
         emit_service_edge(ws->local_edge_buf, source_node, target_node, call, &res, module_qn,
                           rc->registry, rc->main_gbuf, imp_keys, imp_vals, imp_count,
-                          tsjs_drop_plain_call);
+                          tsjs_drop_plain_call || elixir_drop_plain_call);
         atomic_fetch_add_explicit(&rc->time_ns_rc_emit, extract_now_ns() - _rc_t0,
                                   memory_order_relaxed);
         ws->calls_resolved++;

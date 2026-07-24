@@ -1777,6 +1777,34 @@ TEST(lrp_elixir_s8_nested_sibling) {
     PASS();
 }
 
+/* S9 — Elixir stdlib/project name-collision suppression (Phase 2.5c). A call
+ * to stdlib `Keyword.get/3` must NOT fabricate a CALLS edge to a same-named
+ * project function `get/3`: the Elixir LSP classifies the call lsp_ex_stdlib
+ * (no graph node), and the pipeline suppresses the registry's short-name
+ * fallback. The fixture's only candidate edge is the false one, so total
+ * CALLS must be zero. */
+TEST(lrp_elixir_s9_stdlib_collision) {
+    static const LRP_File f[] = {
+        {"routerx.ex", "defmodule Routerx do\n"
+                       "  def get(a, b, c), do: {a, b, c}\n"
+                       "end\n"},
+        {"authx.ex", "defmodule Authx do\n"
+                     "  def realm(opts), do: Keyword.get(opts, :realm, \"App\")\n"
+                     "end\n"}};
+    LRP_Proj lp;
+    cbm_store_t *store = lrp_index(&lp, f, 2);
+    int calls = store ? cbm_store_count_edges_by_type(store, lp.project, "CALLS") : -1;
+    if (calls != 0) {
+        fprintf(stderr, "  [LRP] elixir/S9/stdlib_collision FAIL calls=%d expected 0 "
+                        "(false edge to project get/3 not suppressed)\n",
+                calls);
+        lrp_diag(store, lp.project, "elixir/S9/stdlib_collision");
+    }
+    lrp_cleanup(&lp, store);
+    ASSERT_TRUE(calls == 0);
+    PASS();
+}
+
 /* ══════════════════════════════════════════════════════════════════════
  * SUITE registration
  * ══════════════════════════════════════════════════════════════════════ */
@@ -1894,6 +1922,7 @@ SUITE(lsp_resolution_probe) {
     RUN_TEST(lrp_elixir_s6_protocol_impl);
     RUN_TEST(lrp_elixir_s7_genserver_callback);
     RUN_TEST(lrp_elixir_s8_nested_sibling);
+    RUN_TEST(lrp_elixir_s9_stdlib_collision);
 
     /* ── USAGE-edge bonus probes ── */
     RUN_TEST(lrp_go_usage_struct_literal);

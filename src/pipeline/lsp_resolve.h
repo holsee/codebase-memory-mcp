@@ -297,4 +297,23 @@ static inline const cbm_gbuf_node_t *cbm_pipeline_lsp_target_node(const cbm_gbuf
     return match;
 }
 
+/* Elixir external-call suppression (Phase 2.5c). True when the Elixir LSP
+ * classified this call as a KNOWN-EXTERNAL target — a curated stdlib function
+ * (lsp_ex_stdlib), a Kernel builtin (lsp_ex_kernel), or a use-injected
+ * framework function (lsp_ex_use) — and that target has no graph node (stdlib/
+ * framework modules are not in the indexed tree, so lsp_target is NULL and the
+ * LSP override above could not emit). Falling through to the registry would
+ * let a weak short-name match fabricate an edge to a same-named PROJECT
+ * function (`Keyword.get/3` -> a project `get/3`). Callers suppress ONLY the
+ * plain-CALLS fall-through (the TS/JS suppression shape), so route/HTTP/CONFIG
+ * service branches stay untouched. Gated to Elixir. */
+static inline bool cbm_elixir_suppress_external_match(bool is_elixir, const CBMResolvedCall *lsp,
+                                                      const cbm_gbuf_node_t *lsp_target) {
+    if (!is_elixir || !lsp || lsp_target || !lsp->strategy) {
+        return false;
+    }
+    return strcmp(lsp->strategy, "lsp_ex_stdlib") == 0 ||
+           strcmp(lsp->strategy, "lsp_ex_kernel") == 0 || strcmp(lsp->strategy, "lsp_ex_use") == 0;
+}
+
 #endif /* CBM_PIPELINE_LSP_RESOLVE_H */
