@@ -4721,6 +4721,30 @@ static void elixir_inject_behaviour_defs(CBMExtractCtx *ctx, const char *behavio
     }
 }
 
+// `defstruct`/`defexception` (Phase 2.7d, deferred since PR-0a): emit the
+// module's data shape as a Struct node named after the enclosing module, with
+// QN `<module>.__struct__` so it never collides with the module's Class node.
+// Data, not callables — no CALLS participation; makes `%User{}` shapes
+// discoverable via search_graph label=Struct.
+static void emit_elixir_struct(CBMExtractCtx *ctx, TSNode cur) {
+    CBMArena *a = ctx->arena;
+    const char *prefix = elixir_enclosing_module_prefix(ctx, cur);
+    if (!prefix || !prefix[0]) {
+        return; // defstruct outside a defmodule is not valid Elixir
+    }
+    CBMDefinition def;
+    memset(&def, 0, sizeof(def));
+    def.name = prefix;
+    def.qualified_name = cbm_fqn_compute(a, ctx->project, ctx->rel_path,
+                                         cbm_arena_sprintf(a, "%s.__struct__", prefix));
+    def.label = "Struct";
+    def.file_path = ctx->rel_path;
+    def.start_line = ts_node_start_point(cur).row + TS_LINE_OFFSET;
+    def.end_line = ts_node_end_point(cur).row + TS_LINE_OFFSET;
+    def.is_exported = true;
+    cbm_defs_push(&ctx->result->defs, a, def);
+}
+
 static TSNode emit_elixir_module_class(CBMExtractCtx *ctx, TSNode cur) {
     CBMArena *a = ctx->arena;
     TSNode null_node = {0};
@@ -4842,6 +4866,8 @@ static void extract_elixir_call(CBMExtractCtx *ctx, TSNode node, const CBMLangSp
 
         if (cbm_elixir_def_macro(macro)) {
             extract_elixir_func_def(ctx, cur, macro);
+        } else if (strcmp(macro, "defstruct") == 0 || strcmp(macro, "defexception") == 0) {
+            emit_elixir_struct(ctx, cur);
         } else if (strcmp(macro, "defmodule") == 0 || strcmp(macro, "defprotocol") == 0 ||
                    strcmp(macro, "defimpl") == 0) {
             TSNode do_block = (strcmp(macro, "defimpl") == 0) ? emit_elixir_impl_class(ctx, cur)
