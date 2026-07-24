@@ -36,6 +36,7 @@ cross-module navigation.
 | Phase 0 — grammar only, still no resolver | 0 % | 0 % | 0 % | 0 % |
 | Phase 1 — per-file resolver (PR-1a/b/c) | 34.9 % | 32.5 % | 18.3 % | 16.7 % |
 | Phase 2 — + cross-file resolver (PR-2b) | **44.8 %** | **42.4 %** | **33.7 %** | **66.7 %** |
+| Phase 2.5 — + gap closure (PR-2.5a…d; see [AFTER-PHASE-2.5.md](AFTER-PHASE-2.5.md)) | **54.3 %** | **48.4 %** | **36.9 %** | **100.0 %** |
 
 **Change → goal → outcome:** Phase 1 introduced `elixir_lsp` (goal G2 — a
 per-file resolver Elixir never had): coverage rises from nothing to a third of
