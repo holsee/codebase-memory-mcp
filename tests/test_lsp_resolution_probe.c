@@ -1805,6 +1805,31 @@ TEST(lrp_elixir_s9_stdlib_collision) {
     PASS();
 }
 
+/* S11 — Elixir Erlang atom-module collision suppression (Phase 2.6a). A call
+ * to `:ets.insert/2` must NOT fabricate a CALLS edge to a same-named project
+ * `insert/2` — the resolver classifies atom-module calls lsp_ex_erlang and the
+ * pipeline suppresses the textual fallback. Only candidate edge is the false
+ * one, so total CALLS must be zero. Fails before 2.6a (same_module edge). */
+TEST(lrp_elixir_s11_erlang_collision) {
+    static const LRP_File f[] = {
+        {"storex.ex", "defmodule Storex do\n"
+                      "  def insert(a, b), do: {a, b}\n"
+                      "end\n"},
+        {"cachex.ex", "defmodule Cachex do\n"
+                      "  def put(t, v), do: :ets.insert(t, v)\n"
+                      "end\n"}};
+    LRP_Proj lp;
+    cbm_store_t *store = lrp_index(&lp, f, 2);
+    int calls = store ? cbm_store_count_edges_by_type(store, lp.project, "CALLS") : -1;
+    if (calls != 0) {
+        fprintf(stderr, "  [LRP] elixir/S11/erlang_collision FAIL calls=%d expected 0\n", calls);
+        lrp_diag(store, lp.project, "elixir/S11/erlang_collision");
+    }
+    lrp_cleanup(&lp, store);
+    ASSERT_TRUE(calls == 0);
+    PASS();
+}
+
 /* S10 — Elixir IMPORTS-edge resolution (Phase 2.5d, the C1 register item). An
  * in-repo `alias Showx.User` resolves to the declaring module's Class node
  * (exactly one IMPORTS edge); the external `require Logger` forms no edge
@@ -1951,6 +1976,7 @@ SUITE(lsp_resolution_probe) {
     RUN_TEST(lrp_elixir_s8_nested_sibling);
     RUN_TEST(lrp_elixir_s9_stdlib_collision);
     RUN_TEST(lrp_elixir_s10_imports_resolution);
+    RUN_TEST(lrp_elixir_s11_erlang_collision);
 
     /* ── USAGE-edge bonus probes ── */
     RUN_TEST(lrp_go_usage_struct_literal);

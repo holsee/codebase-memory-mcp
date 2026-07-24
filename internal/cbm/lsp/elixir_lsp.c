@@ -326,8 +326,16 @@ static void elixir_add_import(ElixirLSPContext *ctx, const char *module, TSNode 
                 imp->kind = 2;
             else
                 continue;
-            elixir_collect_sel_pairs(ctx, ts_node_child(pair, ts_node_child_count(pair) - 1), imp,
-                                     0);
+            TSNode selval = ts_node_child(pair, ts_node_child_count(pair) - 1);
+            /* Category selector (`only: :functions` / `:macros` / `:sigils`) —
+             * an atom, not a name/arity list. Categories aren't distinguished
+             * here; treat as a plain import (admit all — the registry lookup
+             * still validates existence). Phase 2.6a. */
+            if (!ts_node_is_null(selval) && strcmp(ts_node_type(selval), "atom") == 0) {
+                imp->kind = 0;
+                continue;
+            }
+            elixir_collect_sel_pairs(ctx, selval, imp, 0);
         }
     }
     ctx->import_count++;
@@ -571,6 +579,18 @@ static void elixir_resolve_qualified(ElixirLSPContext *ctx, TSNode node, const c
     const char *fun = dot + 1;
     if (!fun[0] || !ctx->module_qn)
         return;
+
+    /* Erlang interop: an atom-module call (`:ets.insert(t, v)`) targets an
+     * Erlang module outside the indexed Elixir tree. Classify it
+     * (lsp_ex_erlang) so the pipeline's external-call suppression stops the
+     * textual matcher binding it to a same-named project function (the same
+     * defect class Phase 2.5c fixed for Elixir stdlib). Phase 2.6a. */
+    if (mod[0] == ':') {
+        const char *ekey =
+            cbm_arena_sprintf(ctx->arena, "%s/%d", callee, elixir_callsite_arity(ctx, node));
+        elixir_emit(ctx, ekey, "lsp_ex_erlang", ELIXIR_CONF_STDLIB);
+        return;
+    }
 
     /* Dynamic dispatch on a variable receiver (lowercase first char) is never
      * resolvable — zero-edge. */

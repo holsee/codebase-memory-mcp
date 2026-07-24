@@ -313,7 +313,10 @@ static inline bool cbm_elixir_suppress_external_match(bool is_elixir, const CBMR
         return false;
     }
     return strcmp(lsp->strategy, "lsp_ex_stdlib") == 0 ||
-           strcmp(lsp->strategy, "lsp_ex_kernel") == 0 || strcmp(lsp->strategy, "lsp_ex_use") == 0;
+           strcmp(lsp->strategy, "lsp_ex_kernel") == 0 ||
+           strcmp(lsp->strategy, "lsp_ex_use") == 0 ||
+           strcmp(lsp->strategy, "lsp_ex_erlang") == 0 ||
+           strcmp(lsp->strategy, "lsp_ex_external") == 0;
 }
 
 #endif /* CBM_PIPELINE_LSP_RESOLVE_H */
