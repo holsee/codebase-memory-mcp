@@ -366,6 +366,91 @@ dispatch: `defimpl` methods registered under `Protocol.For.Target`, calls to
 GenServer `handle_call` links; `use`-injected function resolves; Elixir
 cases added to `test_matrix_known_classes.c`.
 
+### Phase 2.5 — Resolver gap closure (pre-promotion)
+
+> Added 2026-07-24 after checkpoint C2. Rationale: C2 measured resolver
+> coverage at 44.8 % / 42.4 % / 33.7 % (plug/phoenix/analytics) against a
+> 66.7 % ceiling on the clean showcase, and enumerated the textual remainder:
+> captures, bare imported calls, stdlib/project name-collisions, and
+> arity-mismatched sites. Two of these are **unfinished §3 ladder rungs**
+> (`lsp_ex_import` rung (c), `lsp_ex_capture` rung (d) — designed from the
+> start, never landed); one is the **outstanding C1 risk-register promise**
+> (fuzzy IMPORTS-edge resolution); one is a **correctness defect the C2 rubric
+> surfaced** (a stdlib call fabricating a project edge). Close them before
+> Phase 3 freezes and documents the shipped behaviour.
+
+**PR-2.5a `feat(elixir-lsp): resolve local captures — ladder rung (d)`**
+- Gap: a local capture `&fun/N` has **no `call` node** (it parses as
+  `unary_operator(&) → binary_operator(fun / N)`), so `elixir_resolve_calls_in`
+  — which only matches `call` nodes — never visits it; the edge forms only via
+  the textual pass. (Qualified `&Mod.fun/N` has an inner `call` node and
+  already resolves via the arity-aware qualified rung.)
+- Fix: match capture-shaped `binary_operator` nodes in the resolution walk via
+  the existing `cbm_elixir_capture_arity` helper; an `identifier` left-hand
+  side resolves through the local ladder with the literal arity, emitting
+  `lsp_ex_capture`.
+- AC: the showcase's `&double/1` CALLS edge flips textual → `lsp_ex_capture`;
+  unit tests — capture inside `Enum.map`, capture selecting the right arity of
+  a multi-arity function, zero-edge for a capture of an unknown function.
+
+**PR-2.5b `feat(elixir-lsp): import-selector resolution — ladder rung (c)`**
+- Gap: `import M, only: [f: 1]` followed by a bare `f()` — PASS 1 records the
+  imported module but **discards the `only:`/`except:` selectors**, and the
+  local rung never consults imports, so bare imported calls stay textual.
+- Fix: parse the selector keyword list into `(name, arity)` pairs at PASS 1;
+  in the local rung (after file-local and Kernel), consult each import whose
+  selector admits `fun/arity` — project modules resolve through the Phase-2b
+  cross map (`lsp_ex_import`), curated stdlib modules classify
+  (`lsp_ex_stdlib`). A selector that does not admit the call's arity must not
+  resolve (no false import edges).
+- AC: the showcase's `|> double()` (via `import Showcase.Math, only:
+  [double: 1]`, pipe arity 1) resolves `lsp_ex_import` — taking the showcase
+  oracle to **6/6 resolver-verified CALLS**; unit tests — `only:` admit,
+  `only:` arity-mismatch (no edge), `except:` exclusion.
+
+**PR-2.5c `fix(elixir-lsp): suppress the textual fallback for
+resolver-classified external calls`**
+- Gap (C2 rubric finding): `Keyword.get(opts, :realm, "…")` is classified
+  `lsp_ex_stdlib` (`Keyword.get/3`), but stdlib modules have no graph node, so
+  the LSP edge is dropped and the **registry fallback fabricates an edge to
+  the project-local `Plug.Router.get/3`** — a false cross-module edge.
+- Fix: in `resolve_single_call` (`src/pipeline/pass_calls.c`), Elixir-gated,
+  mirroring the existing per-language suppression precedents
+  (`cbm_perl_suppress_generic_match`; the TS/JS weak-method suppression that
+  drops **only** the plain-CALLS fall-through and preserves service edges):
+  when the LSP classified the call as external (`lsp_ex_stdlib` /
+  `lsp_ex_kernel` / `lsp_ex_use`) and no target node exists, suppress the
+  generic short-name match instead of guessing.
+- AC: constructed fixture — a project defining `get/3` plus a call to
+  `Keyword.get/3` emits **no** edge to the project `get/3` (fails today); the
+  plug rubric spot-check no longer reports the false edge; all CALLS canaries
+  stay GREEN. Honest metric note: this removes *false* edges, so the M4 share
+  rises partly via a shrinking denominator — C2.5 reports raw counts alongside
+  shares.
+
+**PR-2.5d `fix(elixir): resolve IMPORTS edges to the declaring module's Class
+node`**
+- Gap (the C1 risk-register item, still open): Elixir IMPORTS edges collapse
+  onto the app's root module or resolve to nothing —
+  `cbm_pipeline_resolve_import_node` (`pass_pkgmap.c`) never matches a dotted
+  Elixir module path to its Class node (Strategy 1 composes the wrong QN
+  shape; Strategy 2 needs `namespace_name`, unset for Elixir; Strategy 3
+  matches name *segments*, never the full dotted name the Class node carries).
+- Fix: an Elixir-gated strategy matching `imp->module_path` (the full dotted
+  name, post multi-alias expansion) directly against Class-node `name` — the
+  same module-identity fact PR-2b's cross map exploits.
+- AC: the showcase — whose correctly-extracted in-repo imports currently
+  produce **0** resolved IMPORTS edges (the C1 oracle) — gains edges to the
+  right Class nodes (e.g. `alias Showcase.Accounts.User` → the `User` Class);
+  plug's IMPORTS no longer all collapse onto root `Plug`; IMPORTS counts for
+  a non-Elixir control are identical (shared-code change, Elixir-gated).
+
+**Checkpoint C2.5** — re-run the cross-checkpoint matrix (the C2 table gains a
+row) on all four codebases: M4 with raw numerator/denominator, the showcase
+oracle (target 6/6), IMPORTS-edge accuracy before/after, the TS byte-identical
+control, and the false-edge fixture. Recorded in `testing/AFTER-PHASE-2.5.md`;
+Phase 3 (PR-3b) then documents these as the final shipped numbers.
+
 ### Phase 3 — Evaluation, promotion, documentation
 
 **PR-3a `test(elixir-lsp): QA hardening`** — pathological-input guards
@@ -522,6 +607,11 @@ other languages). `scripts/test.sh` full suite is the per-PR guard.
 | PR-2b cross-file fallback tier | `9dfb2142` | ☑ 2026-07-24 |
 | PR-2c use-table + behaviours + protocols | `c3071bd6` | ☑ 2026-07-24 |
 | Checkpoint C2 recorded (`testing/AFTER-PHASE-2.md`) | — | ☑ 2026-07-24 |
+| PR-2.5a local captures (`lsp_ex_capture`, ladder rung d) | | ☐ |
+| PR-2.5b import-selector resolution (`lsp_ex_import`, ladder rung c) | | ☐ |
+| PR-2.5c external-call textual-fallback suppression | | ☐ |
+| PR-2.5d IMPORTS-edge resolution to Class nodes (C1 register item) | | ☐ |
+| Checkpoint C2.5 recorded (`testing/AFTER-PHASE-2.5.md`) | — | ☐ |
 | PR-3a QA hardening | | ☐ |
 | PR-3b docs + promotion + release matrix | | ☐ |
 
@@ -768,6 +858,21 @@ other languages). `scripts/test.sh` full suite is the per-PR guard.
   `User.new/2`/`User.promote/1` → `lsp_ex_cross`). Non-Elixir control
   byte-identical (graph-ui TS 338/764). Rubric (focused, P2): cross-module trace
   + arity work confirmed; model independently flagged the stdlib collision.
+- 2026-07-24 — **Phase 2.5 (resolver gap closure) planned and inserted before
+  Phase 3**, from the C2 gap enumeration. Four PRs: 2.5a local captures
+  (`lsp_ex_capture` — §3 ladder rung (d), designed from the start but never
+  landed: local `&fun/N` has no `call` node so the resolver walk skips it);
+  2.5b import-selector resolution (`lsp_ex_import` — ladder rung (c): selectors
+  are currently parsed and discarded); 2.5c external-call textual-fallback
+  suppression (the C2 rubric's `Keyword.get/3` → project `Plug.Router.get/3`
+  false edge; mechanism verified — mirrors `cbm_perl_suppress_generic_match` /
+  the TS-JS plain-CALLS-only suppression in `pass_calls.c`); 2.5d IMPORTS-edge
+  resolution to Class nodes (the outstanding C1 risk-register item — PR-2b
+  closed its CALLS half only). Checkpoint C2.5 re-runs the cross-checkpoint
+  matrix with raw counts alongside shares (2.5c shrinks the denominator).
+  Framing: not new scope — two unfinished ladder rungs, one open register
+  promise, one rubric-surfaced correctness defect, closed before Phase 3
+  freezes and documents shipped behaviour.
   with no test exercising them: PR-0d's multi-alias `Foo.{Bar, Baz}` expansion
   and `alias X, as: Y` handling (the grammar_imports fixture used only plain
   directives), and PR-0c's *nested* `defimpl` prefix. Added
@@ -789,4 +894,4 @@ other languages). `scripts/test.sh` full suite is the per-PR guard.
 | Corpus rubric is partly subjective | Blind grading, frozen question key, 3-attempt cap, objective M1–M5 carry the primary claim |
 | Index-time regression from cross-file pass | M5 gate ≤ +15 %; Tier-2 registry as the escape hatch |
 | Originality scan flags resolver code | Clean-room discipline: design-notes-first, no source open while writing; scan locally before each resolver PR |
-| **Fuzzy Elixir import→node resolution** (surfaced by the corpus at C1): dotted module imports collapse to the app root module or resolve to nothing — `cbm_pipeline_resolve_import_node` doesn't map `Mod.Sub` to its declaring module node | Phase 2: resolve `alias`/`import` targets via the resolver's module registry (the same alias map the CALLS resolver builds), keyed by module QN; the `elixir_showcase` corpus (0 IMPORTS edges from correct in-repo imports) is the acceptance oracle |
+| **Fuzzy Elixir import→node resolution** (surfaced by the corpus at C1): dotted module imports collapse to the app root module or resolve to nothing — `cbm_pipeline_resolve_import_node` doesn't map `Mod.Sub` to its declaring module node | **PR-2.5d** (Phase 2.5): an Elixir-gated strategy matching the full dotted `module_path` against Class-node names — the same module-identity fact the PR-2b cross map exploits; the `elixir_showcase` corpus (0 IMPORTS edges from correct in-repo imports) is the acceptance oracle. Phase 2 (PR-2b) closed the *CALLS* half of this finding; the IMPORTS-edge half is 2.5d |
