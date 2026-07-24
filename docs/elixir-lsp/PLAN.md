@@ -607,7 +607,7 @@ other languages). `scripts/test.sh` full suite is the per-PR guard.
 | PR-2b cross-file fallback tier | `9dfb2142` | ☑ 2026-07-24 |
 | PR-2c use-table + behaviours + protocols | `c3071bd6` | ☑ 2026-07-24 |
 | Checkpoint C2 recorded (`testing/AFTER-PHASE-2.md`) | — | ☑ 2026-07-24 |
-| PR-2.5a local captures (`lsp_ex_capture`, ladder rung d) | | ☐ |
+| PR-2.5a local captures (`lsp_ex_capture`, ladder rung d) | `69c058a8` | ☑ 2026-07-24 |
 | PR-2.5b import-selector resolution (`lsp_ex_import`, ladder rung c) | | ☐ |
 | PR-2.5c external-call textual-fallback suppression | | ☐ |
 | PR-2.5d IMPORTS-edge resolution to Class nodes (C1 register item) | | ☐ |
@@ -873,6 +873,16 @@ other languages). `scripts/test.sh` full suite is the per-PR guard.
   Framing: not new scope — two unfinished ladder rungs, one open register
   promise, one rubric-surfaced correctness defect, closed before Phase 3
   freezes and documents shipped behaviour.
+- 2026-07-24 — PR-2.5a landed (`69c058a8`). Local captures resolve:
+  capture-shaped `binary_operator` nodes (`&fun/N` has no `call` node) are now
+  matched in the resolution walk — identifier LHS, integer RHS, node IS the `/`
+  operator (guarding against the left-of-`/` double-match) — and resolve
+  file-local at the literal arity (`lsp_ex_capture` @ 0.90; captured Kernel
+  builtins classify `lsp_ex_kernel`). Showcase oracle: the `&double/1` edge
+  flipped `same_module` → `lsp_ex_capture` (**5/6** resolver-verified; the
+  remaining textual edge is 2.5b's imported bare call). 3 new tests (capture in
+  Enum.map, arity selection f/2-not-f/1, unknown-fn zero-edge). Full suite
+  6651/0.
   with no test exercising them: PR-0d's multi-alias `Foo.{Bar, Baz}` expansion
   and `alias X, as: Y` handling (the grammar_imports fixture used only plain
   directives), and PR-0c's *nested* `defimpl` prefix. Added
