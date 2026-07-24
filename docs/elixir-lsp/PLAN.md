@@ -519,7 +519,7 @@ other languages). `scripts/test.sh` full suite is the per-PR guard.
 | PR-1c name/arity identity (D3) + pipes/captures/defaults | `79ebbc7d` | ☑ 2026-07-24 |
 | Checkpoint C1.5 recorded (`testing/AFTER-PHASE-1.md`) | — | ☑ 2026-07-24 |
 | PR-2a stdlib seed | `dde6f85f` | ☑ 2026-07-24 |
-| PR-2b cross-file fallback tier | | ☐ |
+| PR-2b cross-file fallback tier | `9dfb2142` | ☑ 2026-07-24 |
 | PR-2c use-table + behaviours + protocols | | ☐ |
 | Checkpoint C2 recorded (`testing/AFTER-PHASE-2.md`) | — | ☐ |
 | PR-3a QA hardening | | ☐ |
@@ -711,6 +711,29 @@ other languages). `scripts/test.sh` full suite is the per-PR guard.
   deferred/opt-in; the real Phase-2 graph win is cross-file resolution to
   existing project nodes (PR-2b). Matches the Perl precedent (stdlib classifies,
   doesn't create edges). 3 new tests; full suite 6643/0.
+- 2026-07-24 — PR-2b landed (`9dfb2142`). **Cross-file resolution** — a
+  `Mod.fun/arity` call to a module in another file now resolves to that module's
+  def node with the `lsp_ex_cross` strategy. **Module-identity crux solved
+  (fable-designed):** Elixir def QNs are path-based and `CBMLSPDef` carries no
+  Elixir module name, so `cbm_run_elixir_lsp_cross` recovers
+  `{ElixirModuleName → def_module_qn}` from the Class defs each `defmodule`
+  already emits, registers Function defs under their real QNs, and resolves via
+  alias-expand → map → `lookup_symbol(def_module_qn, "fun/arity")`. Wired in
+  `pass_lsp_cross.c` (include + `has_cross_lsp` + `run_one` switch) mirroring
+  Kotlin, **plus a filter exemption** (join Rust) so the whole project's defs
+  reach the resolver — the default own+imported-module filter starves Elixir
+  (fully-qualified calls have no import; IMPORTS QNs point at Class nodes). Safe
+  because Elixir module names are globally unique. The shared per-file walk is
+  reused via a `cross_module_map`-gated branch (NULL per-file → Phase 1
+  byte-preserved). `import`/alias arrays accepted but not fed (aliases from
+  source; fuzzy IMPORTS QNs would mis-target — `only:`/`except:` selector
+  resolution stays Phase 2). fable corrected the brief on two points (disable the
+  module filter; recover identity from Class defs rather than populate
+  `namespace_name`). 3 direct `cbm_run_elixir_lsp_cross` unit tests + S3 probe
+  flipped GREEN. **End-to-end proof (showcase):** `User.new/2`/`User.promote/1`
+  cross-file calls in accounts.ex now resolve `lsp_ex_cross` to the user.ex def
+  nodes, where C1.5 had them as fuzzy `unique_name` — this is the fuzzy-import
+  finding closed for qualified calls. Full suite 6646/0.
 - 2026-07-24 — Test-coverage audit + backfill. Found three added code paths
   with no test exercising them: PR-0d's multi-alias `Foo.{Bar, Baz}` expansion
   and `alias X, as: Y` handling (the grammar_imports fixture used only plain
