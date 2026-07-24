@@ -677,7 +677,7 @@ other languages). `scripts/test.sh` full suite is the per-PR guard.
 | PR-2.5c external-call textual-fallback suppression | `3961fbec` | ☑ 2026-07-24 |
 | PR-2.5d IMPORTS-edge resolution to Class nodes (C1 register item) | `c59327f0` | ☑ 2026-07-24 |
 | Checkpoint C2.5 recorded (`testing/AFTER-PHASE-2.5.md`) | — | ☑ 2026-07-24 |
-| PR-2.6a atom-module classification + selector atom forms (A1+A2) | | ☐ |
+| PR-2.6a atom-module classification + selector atom forms (A1+A2) | `cbd88b59` | ☑ 2026-07-24 |
 | PR-2.6b unknown-dep qualified suppression (A3) | | ☐ |
 | PR-2.7a `__MODULE__` aliases + defdelegate edges (B5+B4) | | ☐ |
 | PR-2.7b behaviour/impl OVERRIDE linkage (B6) | | ☐ |
