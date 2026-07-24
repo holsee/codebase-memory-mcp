@@ -83,6 +83,7 @@ extern const TSLanguage *tree_sitter_elixir(void);
 #define ELIXIR_CONF_USE 0.85f       /* use-macro-injected framework function (Phase 2c) */
 #define ELIXIR_CONF_CAPTURE 0.90f   /* local capture &fun/N — arity is literal (Phase 2.5a) */
 #define ELIXIR_CONF_IMPORT 0.85f    /* selector-checked imported function (Phase 2.5b) */
+#define ELIXIR_CONF_DELEGATE 0.90f  /* defdelegate to: target — explicit (Phase 2.7a) */
 
 /* Maximum AST-walk recursion depth. Mirrors CBM_LSP_PERL_MAX_WALK_DEPTH: the
  * per-child recursion can stack-overflow on pathologically nested sources; past
@@ -441,6 +442,12 @@ static void elixir_scan_directives(ElixirLSPContext *ctx,
             if (!ts_node_is_null(args) && ts_node_child_count(args) > 0) {
                 int line = (int)ts_node_start_point(node).row + 1;
                 char *mtext = elixir_node_text(ctx, ts_node_child(args, 0));
+                /* `alias __MODULE__.Sub` (Phase 2.7a): substitute the enclosing
+                 * module chain for the __MODULE__ prefix so the alias resolves
+                 * like any dotted module name. Applies to all four directives
+                 * and to the multi-alias form below. */
+                if (mtext && mod_chain && strncmp(mtext, "__MODULE__", 10) == 0)
+                    mtext = cbm_arena_sprintf(ctx->arena, "%s%s", mod_chain, mtext + 10);
                 if (mtext && mtext[0]) {
                     if (strcmp(kw, "alias") == 0 && elixir_expand_multi_alias(ctx, mtext, line)) {
                         /* multi-alias handled */
@@ -652,6 +659,74 @@ static void elixir_resolve_qualified(ElixirLSPContext *ctx, TSNode node, const c
     }
 }
 
+/* defdelegate (Phase 2.7a): `defdelegate fetch(k), to: Map[, as: :get]` — the
+ * delegator is a real def whose implicit body is one call to the target
+ * module's function (same name, or the `as:` name, at the head's arity).
+ * Resolve the target through the usual ladder: project targets emit
+ * lsp_ex_delegate; stdlib/external classify as usual (feeding suppression).
+ * The extractor synthesises the matching textual call site, so a resolved
+ * project target becomes a real delegator→target CALLS edge. */
+static void elixir_resolve_delegate(ElixirLSPContext *ctx, TSNode node, const char *name,
+                                    TSNode args) {
+    const char *to_mod = NULL;
+    const char *as_fun = NULL;
+    uint32_t ac = ts_node_child_count(args);
+    for (uint32_t i = 1; i < ac; i++) {
+        TSNode kw = ts_node_child(args, i);
+        if (ts_node_is_null(kw) || strcmp(ts_node_type(kw), "keywords") != 0)
+            continue;
+        uint32_t pc = ts_node_child_count(kw);
+        for (uint32_t j = 0; j < pc; j++) {
+            TSNode pair = ts_node_child(kw, j);
+            if (ts_node_is_null(pair) || ts_node_child_count(pair) < 2)
+                continue;
+            char *pkey = elixir_node_text(ctx, ts_node_child(pair, 0));
+            char *pval = elixir_node_text(ctx, ts_node_child(pair, ts_node_child_count(pair) - 1));
+            if (!pkey || !pval)
+                continue;
+            if (strncmp(pkey, "to", 2) == 0)
+                to_mod = pval;
+            else if (strncmp(pkey, "as", 2) == 0)
+                as_fun = (pval[0] == ':') ? pval + 1 : pval;
+        }
+    }
+    if (!to_mod || !to_mod[0] || !ctx->module_qn)
+        return;
+    int arity = cbm_elixir_def_arity(node, ctx->source, NULL);
+    const char *fun = (as_fun && as_fun[0]) ? as_fun : name;
+    const char *dkey = cbm_arena_sprintf(ctx->arena, "%s/%d", fun, arity);
+    int line = (int)ts_node_start_point(node).row + 1;
+    const char *expanded = elixir_expand_alias(ctx, to_mod, line);
+
+    if (elixir_module_defined(ctx, expanded)) {
+        const CBMRegisteredFunc *f =
+            cbm_registry_lookup_symbol(ctx->registry, ctx->module_qn, dkey);
+        if (f && f->qualified_name) {
+            elixir_emit(ctx, f->qualified_name, "lsp_ex_delegate", ELIXIR_CONF_DELEGATE);
+            return;
+        }
+    }
+    if (ctx->cross_module_map) {
+        const char *dmq = (const char *)cbm_ht_get((CBMHashTable *)ctx->cross_module_map, expanded);
+        if (dmq) {
+            const CBMRegisteredFunc *f = cbm_registry_lookup_symbol(ctx->registry, dmq, dkey);
+            if (f && f->qualified_name) {
+                elixir_emit(ctx, f->qualified_name, "lsp_ex_delegate", ELIXIR_CONF_DELEGATE);
+                return;
+            }
+        }
+    }
+    const CBMRegisteredFunc *s = cbm_registry_lookup_symbol(ctx->registry, expanded, dkey);
+    if (s && s->qualified_name) {
+        elixir_emit(ctx, s->qualified_name, "lsp_ex_stdlib", ELIXIR_CONF_STDLIB);
+        return;
+    }
+    if (ctx->cross_module_map) {
+        elixir_emit(ctx, cbm_arena_sprintf(ctx->arena, "%s.%s", expanded, dkey), "lsp_ex_external",
+                    ELIXIR_CONF_STDLIB);
+    }
+}
+
 /* Resolve every call in an expression subtree (a def head is excluded by the
  * caller). Recurses so calls nested in arguments (`foo(bar())`) are seen. */
 static void elixir_resolve_calls_in(ElixirLSPContext *ctx,
@@ -761,6 +836,9 @@ static void elixir_resolve_walk(ElixirLSPContext *ctx, TSNode node) { // NOLINT(
                 int mx = cbm_elixir_def_arity(node, ctx->source, &mn);
                 ctx->enclosing_func_qn =
                     cbm_arena_sprintf(ctx->arena, "%s.%s/%d", ctx->module_qn, name, mx);
+                /* defdelegate: resolve the implicit call to its target. */
+                if (strcmp(kw, "defdelegate") == 0)
+                    elixir_resolve_delegate(ctx, node, name, args);
                 /* Resolve calls in the body: the do_block, and any keyword-form
                  * body / guard-free trailing args (skip the head at index 0). */
                 TSNode body = elixir_find_do_block(node);

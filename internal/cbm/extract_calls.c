@@ -429,6 +429,74 @@ static bool perl_is_identifier_callee(const char *name) {
     return true;
 }
 
+// Elixir `defdelegate fetch(k), to: Map[, as: :get]` (Phase 2.7a): the
+// delegator is a real def whose implicit body is exactly one call to the
+// target. Rewrite the otherwise-unresolvable `defdelegate` call record into
+// that delegator -> target call: callee becomes `To.fun/arity` (the `as:`
+// name, else the head name, at the head's arity) and the enclosing QN becomes
+// the delegator's own def QN so the edge sources from the delegator. Returns
+// false (leave the record untouched) when there is no `to:` keyword.
+static bool elixir_rewrite_delegate_call(CBMExtractCtx *ctx, TSNode node, CBMCall *call) {
+    CBMArena *a = ctx->arena;
+    TSNode args = ts_node_child_by_field_name(node, TS_FIELD("arguments"));
+    if (ts_node_is_null(args) && ts_node_child_count(node) > 1) {
+        args = ts_node_child(node, 1);
+    }
+    if (ts_node_is_null(args) || ts_node_child_count(args) == 0) {
+        return false;
+    }
+    // Head name: `fetch(k)` (a call) or bare `fetch` (identifier).
+    TSNode head = ts_node_child(args, 0);
+    char *name = NULL;
+    if (!ts_node_is_null(head)) {
+        const char *hk = ts_node_type(head);
+        if (strcmp(hk, "call") == 0 && ts_node_child_count(head) > 0) {
+            name = cbm_node_text(a, ts_node_child(head, 0), ctx->source);
+        } else if (strcmp(hk, "identifier") == 0) {
+            name = cbm_node_text(a, head, ctx->source);
+        }
+    }
+    if (!name || !name[0]) {
+        return false;
+    }
+    const char *to_mod = NULL;
+    const char *as_fun = NULL;
+    uint32_t ac = ts_node_child_count(args);
+    for (uint32_t i = 1; i < ac; i++) {
+        TSNode kw = ts_node_child(args, i);
+        if (ts_node_is_null(kw) || strcmp(ts_node_type(kw), "keywords") != 0) {
+            continue;
+        }
+        uint32_t pc = ts_node_child_count(kw);
+        for (uint32_t j = 0; j < pc; j++) {
+            TSNode pair = ts_node_child(kw, j);
+            if (ts_node_is_null(pair) || ts_node_child_count(pair) < 2) {
+                continue;
+            }
+            char *pkey = cbm_node_text(a, ts_node_child(pair, 0), ctx->source);
+            char *pval =
+                cbm_node_text(a, ts_node_child(pair, ts_node_child_count(pair) - 1), ctx->source);
+            if (!pkey || !pval) {
+                continue;
+            }
+            if (strncmp(pkey, "to", 2) == 0) {
+                to_mod = pval;
+            } else if (strncmp(pkey, "as", 2) == 0) {
+                as_fun = (pval[0] == ':') ? pval + 1 : pval;
+            }
+        }
+    }
+    if (!to_mod || !to_mod[0]) {
+        return false;
+    }
+    int arity = cbm_elixir_def_arity(node, ctx->source, NULL);
+    const char *fun = (as_fun && as_fun[0]) ? as_fun : name;
+    call->callee_name = cbm_arena_sprintf(a, "%s.%s/%d", to_mod, fun, arity);
+    call->enclosing_func_qn =
+        cbm_arena_sprintf(a, "%s/%d", cbm_fqn_compute(a, ctx->project, ctx->rel_path, name), arity);
+    return true;
+}
+
 // Callee extraction for scripting languages (Elixir, Perl, PHP, Kotlin, MATLAB).
 static char *extract_scripting_callee(CBMArena *a, TSNode node, const char *source,
                                       CBMLanguage lang, const char *nk) {
@@ -2304,11 +2372,18 @@ void handle_calls(CBMExtractCtx *ctx, TSNode node, const CBMLangSpec *spec, Walk
             // arity literally; otherwise it is the positional arg count (+1 for
             // a `|>` piped subject).
             if (ctx->language == CBM_LANG_ELIXIR && call.callee_name && call.callee_name[0]) {
-                int arity = 0;
-                if (!cbm_elixir_capture_arity(node, ctx->source, &arity)) {
-                    arity = cbm_elixir_call_arity(node, ctx->source);
+                if (strcmp(call.callee_name, "defdelegate") == 0 &&
+                    elixir_rewrite_delegate_call(ctx, node, &call)) {
+                    // Rewritten to the delegator -> target call (Phase 2.7a);
+                    // callee and enclosing QN are final.
+                } else {
+                    int arity = 0;
+                    if (!cbm_elixir_capture_arity(node, ctx->source, &arity)) {
+                        arity = cbm_elixir_call_arity(node, ctx->source);
+                    }
+                    call.callee_name =
+                        cbm_arena_sprintf(ctx->arena, "%s/%d", call.callee_name, arity);
                 }
-                call.callee_name = cbm_arena_sprintf(ctx->arena, "%s/%d", call.callee_name, arity);
             }
 
             cbm_calls_push(&ctx->result->calls, ctx->arena, call);
