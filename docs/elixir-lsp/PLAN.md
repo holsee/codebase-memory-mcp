@@ -1,7 +1,7 @@
 # Elixir Hybrid LSP — Execution Plan
 
 **Status:** In progress · **Branch:** `feat/elixir-hybrid-lsp` (fork `holsee/codebase-memory-mcp`) · **Tracking issue:** [holsee/codebase-memory-mcp#1](https://github.com/holsee/codebase-memory-mcp/issues/1)
-**Last updated:** 2026-07-23
+**Last updated:** 2026-07-24
 
 This document is the single source of truth for bringing Elixir to full Hybrid
 LSP parity with the ten resolver-backed languages (Python, TypeScript, Go,
@@ -514,7 +514,7 @@ other languages). `scripts/test.sh` full suite is the per-PR guard.
 | PR-0d module-body directives | `214b2fe6` | ☑ 2026-07-23 |
 | PR-0e vars + contract strength | `0a25d2f4` | ☑ 2026-07-23 |
 | Checkpoint C1 recorded (`testing/AFTER-PHASE-0.md`) | — | ☑ 2026-07-24 |
-| PR-1a skeleton + wiring + originality rows | | ☐ |
+| PR-1a skeleton + wiring + originality rows | `15985052` | ☑ 2026-07-24 |
 | PR-1b scopes/aliases/imports resolution | | ☐ |
 | PR-1c pipes/captures/default arities | | ☐ |
 | PR-2a stdlib seed | | ☐ |
@@ -618,6 +618,22 @@ other languages). `scripts/test.sh` full suite is the per-PR guard.
   module; the showcase resolves 0 from correct in-repo imports). PR-0d's real
   win is import *extraction* (unit-tested); accurate cross-module resolution is
   a newly-tracked Phase 2 target.
+- 2026-07-24 — PR-1a landed (`15985052`). Elixir Hybrid LSP resolver **skeleton**
+  + wiring: `elixir_lsp.{c,h}` (ElixirLSPContext mirroring PerlLSPContext;
+  init/entry lifecycle + a depth-guarded **no-op** walk), `generated/
+  elixir_stdlib_data.c` (Kernel auto-import stub), `tests/test_elixir_lsp.c`
+  scaffold. Wired at the per-file dispatch (`cbm.c`), unity build (`lsp_all.c`),
+  the five test touchpoints, and `check-lsp-originality.sh` REFS[] (scanning
+  against Expert, Apache-2.0). The walk emits nothing, so the graph is
+  **byte-identical** to the Phase-0 tip — verified on `elixir_showcase`
+  (Functions=18, Classes=8, 8/8 capability checks unchanged). Gates: prod +
+  ASan/UBSan build clean (-Werror); full suite **6621 passed / 0 failed / 4
+  skipped**; clang-format clean; originality scan **CLEAN** (no verbatim/
+  structural overlap). Deviation: `lrp_elixir_s1..s8` probe scenarios moved to
+  PR-1b (a coarse CALLS-floor matrix carries no signal against a no-op walk —
+  calibrate them against real resolution). Delivery: three **stacked** PRs
+  (PR-1a→1b→1c) on the fork; a full interim checkpoint (`AFTER-PHASE-1.md`,
+  M1–M5 + rubric) is recorded at the tip of the stack.
 - 2026-07-24 — Test-coverage audit + backfill. Found three added code paths
   with no test exercising them: PR-0d's multi-alias `Foo.{Bar, Baz}` expansion
   and `alias X, as: Y` handling (the grammar_imports fixture used only plain
