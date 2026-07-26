@@ -779,6 +779,35 @@ TEST(elixirlsp_stdlib_nodes_opt_in) {
     PASS();
 }
 
+/* defstruct/defexception emit Struct nodes named after the module, with a
+ * `.__struct__` QN that never collides with the module Class. Phase 2.7d. */
+TEST(elixirlsp_defstruct_node) {
+    const char *src = "defmodule U do\n"
+                      "  defstruct name: nil, age: 0\n"
+                      "  def go, do: :ok\n"
+                      "end\n"
+                      "defmodule E do\n"
+                      "  defexception message: \"boom\"\n"
+                      "end\n";
+    CBMFileResult *r = extract_elixir(src);
+    ASSERT(r);
+    int saw_u = 0;
+    int saw_e = 0;
+    for (int i = 0; i < r->defs.count; i++) {
+        const CBMDefinition *d = &r->defs.items[i];
+        if (!d->label || strcmp(d->label, "Struct") != 0 || !d->qualified_name)
+            continue;
+        if (strstr(d->qualified_name, "U.__struct__") && d->name && strcmp(d->name, "U") == 0)
+            saw_u = 1;
+        if (strstr(d->qualified_name, "E.__struct__"))
+            saw_e = 1;
+    }
+    ASSERT(saw_u);
+    ASSERT(saw_e);
+    cbm_free_result(r);
+    PASS();
+}
+
 /* A resolver run over an empty module emits nothing and does not crash. */
 TEST(elixirlsp_empty_module) {
     const char *src = "defmodule Empty do\nend\n";
@@ -824,6 +853,7 @@ SUITE(elixir_lsp) {
     RUN_TEST(elixirlsp_behaviour_injection);
     RUN_TEST(elixirlsp_no_behaviour_no_injection);
     RUN_TEST(elixirlsp_stdlib_nodes_opt_in);
+    RUN_TEST(elixirlsp_defstruct_node);
     RUN_TEST(elixirlsp_import_only_atom_form);
     RUN_TEST(elixirlsp_import_only_stdlib);
     RUN_TEST(elixirlsp_import_only_arity_mismatch);
